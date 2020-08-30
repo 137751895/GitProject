@@ -23,6 +23,7 @@ def main():
     main_window = MainWindow(main_engine, event_engine)
     main_window.showMaximized()
     qapp.exec()
+    print('master 分支在同样的位置增加一行print！')
 
 
 
