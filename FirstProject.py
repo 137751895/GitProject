@@ -22,9 +22,7 @@ def main():
 
     main_window = MainWindow(main_engine, event_engine)
     main_window.showMaximized()
-    print ('111111111111')
     qapp.exec()
-    print ('111111111111')
 
 
 
