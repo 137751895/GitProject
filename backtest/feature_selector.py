@@ -544,7 +544,8 @@ def get_recommended_feature_groups():
         "市场状态": [
             "regime_volatility", "trend_strength", "volatility_rank",
             "market_regime", "trend_direction", "volatility_change",
-            "trend_acceleration",
+            "trend_acceleration", "reversal_score", "regime_duration",
+            "regime_change_prob",
         ],
         "微观结构": [
             "divergence", "vwap_dev", "vol_state", "mom_slope",

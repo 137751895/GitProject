@@ -88,7 +88,7 @@ GitProject/
 | `compute_candle_features()` | K线形态特征 | `body_ratio`, `upper_shadow_ratio`, `lower_shadow_ratio`, `candle_direction`, `amplitude`, `gap`, `gap_ratio` |
 | `compute_volatility_features()` | 波动率特征 | `volatility_*`, `return_ma_*`, `log_return` |
 | `compute_price_position()` | 价格位置特征 | `price_position`, `dist_to_high`, `dist_to_low` |
-| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减） | 81~89个特征 |
+| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减） | 84~92个特征 |
 | `get_feature_hierarchy()` | **获取分层特征结构**，按5层层级组织全部特征 | 层级字典 |
 | `compute_prediction_targets()` | 预测目标 | `future_return`, `future_direction`, `future_volatility`, `future_regime` |
 
@@ -119,7 +119,42 @@ GitProject/
 
 ### `features/market_regime.py` — 市场状态识别模块
 
-**`MarketRegimeDetector` 类** — 识别趋势/震荡/反转等市场状态（四种状态 × 7个特征）。
+**`MarketRegimeDetector` 类** — 识别趋势/震荡/反转等市场状态（五种状态 × 10个特征）。
+
+**五种市场状态：**
+
+| 编码 | 状态标签 | 说明 | 交易建议 |
+|------|----------|------|----------|
+| 0 | `low_vol_range` | 低波动震荡 — 窄幅整理 | 观望或轻仓做区间 |
+| 1 | `low_vol_trend` | 低波动趋势 — 平稳趋势 | 顺势轻仓操作 |
+| 2 | `high_vol_range` | 高波动震荡 — 宽幅震荡 | 宽幅区间交易、注意止损 |
+| 3 | `high_vol_trend` | 高波动趋势 — 强势行情 | 趋势跟踪、加大仓位 |
+| 4 | `reversal` | 反转信号 — 趋势即将反转 | 平仓或反向操作 |
+
+**状态判定逻辑：**
+1. 计算滚动波动率 + 趋势强度（Pearson相关系数）
+2. 波动率分位数 > 0.7 → 高波动；< 0.3 → 低波动
+3. 趋势强度绝对值 > 0.3 → 强趋势；否则 → 震荡
+4. 反转信号（优先级最高，覆盖其他状态）：
+   - RSI超买(>70)或超卖(<30) — 权重40%
+   - 价格偏离均线超过2% — 权重30%
+   - 趋势加速度反向（趋势正在减弱）— 权重30%
+   - 三者加权总分 ≥ 0.5 时判定为反转
+
+**输出特征（10个）：**
+
+| 特征名 | 说明 |
+|--------|------|
+| `regime_volatility` | 滚动波动率 |
+| `trend_strength` | 趋势强度（-1~+1，Pearson相关系数） |
+| `volatility_rank` | 波动率百分位排名 |
+| `market_regime` | 五状态编码（0~4） |
+| `trend_direction` | 趋势方向（-1/0/+1） |
+| `volatility_change` | 波动率5周期变化率 |
+| `trend_acceleration` | 趋势加速度 |
+| `reversal_score` | 反转信号强度（0~1） |
+| `regime_duration` | 当前状态已持续K线数 |
+| `regime_change_prob` | 状态转换概率（滚动频率） |
 
 ### `models/ml_models.py` — 机器学习模型模块
 
@@ -175,7 +210,7 @@ LightGBM + XGBoost 加权集成，基于验证集自动分配权重。
       'level2_trend':    趋势特征 — 均线与布林带 (16个)
       'level3_momentum': 动量与波动率特征 — 技术指标振荡器 (30个)
       'level4_micro':    微观结构特征 — 资金流向与持仓分析 (16个)
-      'level5_cross':    跨周期与高级组合特征 (6个)
+      'level5_cross':    跨周期与高级组合特征 (9个)
   }
 ```
 
@@ -228,15 +263,18 @@ LightGBM + XGBoost 加权集成，基于验证集自动分配权重。
 | `oi_ma_*` / `oi_change_ma_*` | — | 持仓量和仓差移动平均 |
 | `vol_oi_ratio` | `volume / open_interest` | 量仓比 |
 
-#### Level 5: 跨周期与高级组合特征（6个）— 市场状态
+#### Level 5: 跨周期与高级组合特征（9个）— 市场状态
 
 | 特征名 | 说明 |
 |--------|------|
 | `regime_volatility` | 滚动波动率 |
 | `volatility_rank` / `volatility_change` | 波动率排名和变化率 |
-| `market_regime` | 市场状态编码（0~3） |
+| `market_regime` | 市场状态编码（0~4，含反转状态） |
 | `volatility_regime` | 收益率的20周期滚动标准差 |
 | `vol_ratio` | ATR14 / ATR14的20周期均值 |
+| `reversal_score` | 反转信号强度（0~1，综合RSI极端值+均线偏离+趋势减弱） |
+| `regime_duration` | 当前市场状态已持续的K线数量 |
+| `regime_change_prob` | 滚动窗口内市场状态转换概率 |
 
 ### 各周期窗口参数差异
 
@@ -244,7 +282,7 @@ LightGBM + XGBoost 加权集成，基于验证集自动分配权重。
 |------|-------|-------|--------|
 | MA/EMA窗口 | 5, 10, 20, 60, 120 | 5, 10, 20, 60 | 5, 10, 20, 40 |
 | 成交量窗口 | 5, 10, 20, 60 | 5, 10, 20 | 5, 10, 20 |
-| 总特征数 | ~89 | ~81 | ~81 |
+| 总特征数 | ~92 | ~84 | ~84 |
 
 ---
 
@@ -285,7 +323,7 @@ LightGBM + XGBoost 加权集成，基于验证集自动分配权重。
 | 波动率 | 9 | ATR/波动率标准差 |
 | 持仓量(仓差) | 9 | 仓差/量仓比 |
 | K线形态 | 7 | 实体比/影线/缺口 |
-| 市场状态 | 7 | 趋势/波动率状态 |
+| 市场状态 | 10 | 趋势/波动率/反转/持续时间/转换概率 |
 | **微观结构** | **8** | **divergence/vwap_dev/vol_state/mom_slope/close_pos/rsi_slope/vol_zscore/gap_decay** |
 | **高级波动率** | **4** | **volatility_regime/vol_ratio/atr_pct/range_pct** |
 
@@ -392,12 +430,12 @@ python ml_pipeline.py --period 5min --target future_direction --n-rows 2000
 ============================================================
 
 # 步骤1: 数据准备（分层特征结构）
-特征数量: 81, 样本数量: 1901
+特征数量: 84, 样本数量: 1901
   level1_price (基础价格特征 — OHLCV直接衍生): 13个特征
   level2_trend (趋势特征 — 均线与布林带): 16个特征
   level3_momentum (动量与波动率特征 — 技术指标振荡器): 30个特征
   level4_micro (微观结构特征 — 资金流向与持仓分析): 16个特征
-  level5_cross (跨周期与高级组合特征 — 市场状态与波动率状态): 6个特征
+  level5_cross (跨周期与高级组合特征 — 市场状态与波动率状态): 9个特征
 
 # 步骤2: 模型训练（集成模型）
 使用 LightGBM+XGBoost 集成模型...
@@ -434,7 +472,7 @@ vwap_dev             0.020     ← 新增微观结构特征入选Top 10
 
 1. **高级波动率组排名第1**（0.527）— 新增的 `volatility_regime`, `vol_ratio`, `atr_pct`, `range_pct` 特征预测能力最强
 2. **微观结构特征入选最佳特征集** — `vwap_dev` 和 `vol_zscore` 被综合特征选择选入Top 20
-3. **特征总数提升** — 从62-70个增至81-89个（新增12个高价值特征）
+3. **特征总数提升** — 从62-70个增至84-92个（含10个市场状态特征 + 12个增强特征）
 4. **Numba加速** — 增强特征模块使用numba加速的rolling计算，适合高频数据场景
 
 > **注意**：当前使用模拟随机数据，实际商品期货数据的预测效果会因市场行情不同而有差异。接入真实行情数据后需要重新训练和评估。

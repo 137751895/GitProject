@@ -89,6 +89,14 @@ REGIME_CONFIG = {
     "vol_quantile_high": 0.7,
     "vol_quantile_low": 0.3,
     "trend_threshold": 0.3,
+    # 反转检测参数
+    "rsi_window": 14,
+    "rsi_overbought": 70,
+    "rsi_oversold": 30,
+    "ma_deviation_threshold": 0.02,
+    "reversal_lookback": 5,
+    "trend_accel_threshold": 0.1,
+    "reversal_weights": (0.4, 0.3, 0.3),
     # 五分位预测目标的收益率分箱阈值: [强跌 | -0.5% | 弱跌 | -0.1% | 中性 | +0.1% | 弱涨 | +0.5% | 强涨]
     "bins": [float("-inf"), -0.005, -0.001, 0.001, 0.005, float("inf")],
 }
@@ -172,6 +180,7 @@ FEATURE_HIERARCHY = {
         "features": [
             "regime_volatility", "volatility_rank", "volatility_change",
             "market_regime", "volatility_regime", "vol_ratio",
+            "reversal_score", "regime_duration", "regime_change_prob",
         ],
     },
 }
