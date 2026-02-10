@@ -114,3 +114,35 @@ REGIME_LABELS = {
     3: "weak_up",
     4: "strong_up",
 }
+
+# 增强特征配置
+ENHANCED_FEATURE_CONFIG = {
+    # 微观结构特征
+    "microstructure": {
+        "enabled": True,
+        "features": [
+            "divergence", "vwap_dev", "vol_state", "mom_slope",
+            "close_pos", "rsi_slope", "vol_zscore",
+        ],
+    },
+    # 高级波动率特征
+    "advanced_volatility": {
+        "enabled": True,
+        "features": [
+            "volatility_regime", "vol_ratio", "atr_pct", "range_pct",
+        ],
+    },
+    # 缺口衰减特征
+    "gap_decay": {
+        "enabled": True,
+        "features": ["gap_decay"],
+        "night_session_start_hour": 21,
+        "night_session_start_max_minute": 30,
+        "decay_constant": 300,
+    },
+    # Numba加速
+    "numba_acceleration": {
+        "enabled": True,
+        "description": "使用numba加速核心指标计算（rolling_mean, rsi, macd等），比pandas快10-50倍",
+    },
+}

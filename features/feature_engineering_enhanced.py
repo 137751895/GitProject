@@ -135,8 +135,8 @@ def compute_gap_decay_features(df):
     """
     计算缺口衰减特征（针对期货夜盘）。
 
-    夜盘开盘（21:00）后的缺口会随时间指数衰减，
-    衰减因子 = exp(-经过秒数 / 300)
+    夜盘开盘后的缺口会随时间指数衰减，
+    衰减因子 = exp(-经过秒数 / decay_constant)
 
     Parameters
     ----------
@@ -148,6 +148,12 @@ def compute_gap_decay_features(df):
     pd.DataFrame
         缺口衰减特征
     """
+    from config import ENHANCED_FEATURE_CONFIG
+    gap_cfg = ENHANCED_FEATURE_CONFIG.get("gap_decay", {})
+    night_hour = gap_cfg.get("night_session_start_hour", 21)
+    night_max_min = gap_cfg.get("night_session_start_max_minute", 30)
+    decay_const = gap_cfg.get("decay_constant", 300)
+
     close = df["close"].values.astype(np.float64)
     open_ = df["open"].values.astype(np.float64)
 
@@ -164,12 +170,12 @@ def compute_gap_decay_features(df):
 
     for i in range(len(df)):
         t = dt[i]
-        if t.hour == 21 and t.minute < 30:
+        if t.hour == night_hour and t.minute < night_max_min:
             prev_close = close[i - 1] if i > 0 else np.nan
             if np.isfinite(prev_close) and prev_close > 0:
                 gap = (open_[i] - prev_close) / prev_close
                 seconds = t.minute * 60 + t.second
-                gap_decay[i] = gap * float(np.exp(-seconds / 300.0))
+                gap_decay[i] = gap * float(np.exp(-seconds / decay_const))
 
     return pd.DataFrame({"gap_decay": gap_decay}, index=df.index)
 
@@ -197,7 +203,7 @@ def _rolling_slope(y: np.ndarray, window: int) -> np.ndarray:
     x = np.arange(window, dtype=np.float64)
     x_mean = (window - 1) / 2.0
     var_x = np.sum((x - x_mean) ** 2)
-    if var_x == 0.0:
+    if abs(var_x) < 1e-12:
         return out
     for i in range(window - 1, n):
         y_win = y[i - window + 1: i + 1]

@@ -14,7 +14,8 @@ import numpy as np
 
 try:
     from numba import njit
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
+    # Fallback: no-op decorator when numba is not installed
     def njit(*args, **kwargs):  # type: ignore
         def deco(func):
             return func

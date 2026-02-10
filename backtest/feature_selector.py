@@ -548,10 +548,9 @@ def get_recommended_feature_groups():
         ],
         "微观结构": [
             "divergence", "vwap_dev", "vol_state", "mom_slope",
-            "close_pos", "rsi_slope", "vol_zscore",
+            "close_pos", "rsi_slope", "vol_zscore", "gap_decay",
         ],
         "高级波动率": [
             "volatility_regime", "vol_ratio", "atr_pct", "range_pct",
-            "gap_decay",
         ],
     }
