@@ -243,7 +243,7 @@ class OnlineLearner:
         X_update = pd.concat(self._buffer_X, ignore_index=True)
         y_update = pd.concat(self._buffer_y, ignore_index=True)
 
-        # 限制缓冲区大小
+        # 限制缓冲区大小（保留最近的数据，因为增量学习关注最新的市场状态）
         if len(X_update) > self.max_buffer_size:
             X_update = X_update.tail(self.max_buffer_size)
             y_update = y_update.tail(self.max_buffer_size)

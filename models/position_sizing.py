@@ -311,7 +311,7 @@ def compute_performance_metrics(returns):
     # 盈亏比
     total_profit = np.sum(wins) if len(wins) > 0 else 0.0
     total_loss = np.abs(np.sum(losses)) if len(losses) > 0 else 0.0
-    profit_factor = total_profit / total_loss if total_loss > 0 else float("inf")
+    profit_factor = total_profit / total_loss if total_loss > 0 else 999.0
 
     # 胜率
     n_trades = np.sum(returns != 0)
@@ -465,15 +465,16 @@ class RiskBudgetManager:
         # 更新回撤
         dd_status = self.drawdown_tracker.update_equity(pnl)
 
-        # 记录收益率用于绩效计算
-        equity = self.drawdown_tracker.equity
-        if equity > 0:
-            self._trade_returns.append(pnl / equity)
+        # 记录收益率用于绩效计算（基于交易前权益）
+        pre_trade_equity = self.drawdown_tracker.equity - pnl
+        if pre_trade_equity > 0:
+            self._trade_returns.append(pnl / pre_trade_equity)
 
         # 更新日内限额
         daily_status = None
         if trade_date is not None:
-            self.daily_limit.check_and_reset(trade_date, equity)
+            current_equity = self.drawdown_tracker.equity
+            self.daily_limit.check_and_reset(trade_date, current_equity)
             daily_status = self.daily_limit.record_trade(pnl)
 
         return {

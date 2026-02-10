@@ -214,6 +214,7 @@ def train_and_evaluate(X, y, period="5min", task="classification"):
             # 模拟交易绩效
             trade_mask = signals["signal"] != 0
             if np.sum(trade_mask) > 0:
+                # 模拟收益: 将二分类标签(0/1)映射为方向(-1/+1)，乘以模拟单笔收益0.1%
                 actual_returns = (y_test.values[trade_mask] * 2 - 1) * 0.001
                 perf = compute_performance_metrics(actual_returns)
                 logger.info(f"  模拟绩效: 胜率={perf['win_rate']:.2%}, "

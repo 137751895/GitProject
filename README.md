@@ -36,7 +36,8 @@ GitProject/
 │   ├── __init__.py
 │   ├── ml_models.py                   # 机器学习模型模块
 │   ├── ensemble_model.py             # 模型集成模块
-│   └── position_sizing.py            # 仓位管理模块
+│   ├── adaptive_learning.py          # 实时自适应模块（在线学习/漂移检测/自适应阈值）
+│   └── position_sizing.py            # 风险预算与仓位管理模块
 └── backtest/
     ├── __init__.py
     └── feature_selector.py            # 回测与特征选择模块
@@ -59,7 +60,8 @@ GitProject/
 | `LGBM_CONFIG` / `XGB_CONFIG` / `LSTM_CONFIG` | 各模型超参数 |
 | `REGIME_CONFIG` | 市场状态识别参数 |
 | `ENSEMBLE_CONFIG` | 集成模型配置 |
-| `POSITION_CONFIG` | 仓位管理配置 |
+| `POSITION_CONFIG` | 仓位管理配置（含回撤保护和日内限额） |
+| `ADAPTIVE_CONFIG` | 实时自适应配置（漂移检测/在线学习/阈值灵敏度） |
 | `ENHANCED_FEATURE_CONFIG` | 增强特征配置（微观结构/高级波动率/缺口衰减/Numba加速） |
 | `FEATURE_HIERARCHY` | 5层分层特征结构（level1_price → level5_cross） |
 
@@ -164,9 +166,150 @@ GitProject/
 
 LightGBM + XGBoost 加权集成，基于验证集自动分配权重。
 
-### `models/position_sizing.py` — 仓位管理模块
+### `models/adaptive_learning.py` — 实时自适应模块
 
-改进Kelly公式的仓位计算 + 波动率自适应交易阈值。
+应对市场结构变化的核心模块，包含以下组件：
+
+**`ConceptDriftDetector` 类 — 概念漂移检测器**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `window_size` | 100 | 滑动窗口大小（最近N个预测样本） |
+| `warning_threshold` | 0.05 | 准确率下降触发warning的阈值 |
+| `drift_threshold` | 0.10 | 准确率下降触发drift的阈值 |
+| `baseline_window` | 500 | 基准性能统计窗口 |
+
+通过滑动窗口持续监控模型预测准确率，与历史基准对比：
+- 下降 < 5%: `none`（无漂移，正常运行）
+- 下降 5%~10%: `warning`（轻微漂移，建议关注）
+- 下降 ≥ 10%: `drift`（严重漂移，建议重训模型）
+
+**`OnlineLearner` 类 — 在线学习器**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `update_interval` | 500 | 每收集多少新样本后触发增量更新 |
+| `n_incremental_trees` | 50 | 每次增量更新新增的树数量 |
+| `max_buffer_size` | 5000 | 数据缓冲区最大大小 |
+
+对LightGBM/XGBoost执行增量训练（warm-start），在已有模型基础上继续训练少量新树：
+- LightGBM: 使用 `init_model` 参数增量训练
+- XGBoost: 使用 `xgb_model` 参数增量训练
+- LSTM: 不支持在线学习，需完全重训
+
+**`AdaptiveThresholdManager` 类 — 自适应阈值管理器**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `base_threshold` | 0.55 | 基础交易阈值 |
+| `vol_sensitivity` | 1.0 | 波动率灵敏度 |
+| `performance_sensitivity` | 0.5 | 性能灵敏度 |
+| `min_threshold` / `max_threshold` | 0.50 / 0.85 | 阈值上下限 |
+
+阈值计算公式：
+```
+threshold = base + vol_adjustment + perf_adjustment
+vol_adjustment  = vol_sensitivity × (当前波动率/历史均值 - 1.0) × 0.1
+perf_adjustment = perf_sensitivity × max(0, 基准准确率 - 当前准确率) × 0.5
+```
+- 高波动率 → 提高阈值（更保守，减少假信号）
+- 模型性能下降 → 提高阈值（减少风险暴露）
+
+**`AdaptiveModelManager` 类 — 统一管理器**
+
+整合漂移检测 + 在线学习 + 自适应阈值，提供 `step()` 方法执行一步自适应更新。
+
+使用示例:
+```python
+from models.adaptive_learning import AdaptiveModelManager
+
+manager = AdaptiveModelManager(trained_model)
+status = manager.step(
+    y_true=actual_labels,
+    y_pred=predicted_labels,
+    X_new=new_features,
+    y_new=new_targets,
+    current_volatility=0.02,
+    mean_volatility=0.015,
+)
+print(status["drift_level"])    # "none" / "warning" / "drift"
+print(status["threshold"])       # 动态交易阈值
+print(status["needs_retrain"])   # 是否需要完全重训
+```
+
+### `models/position_sizing.py` — 风险预算与仓位管理模块
+
+将ML信号转化为实际仓位，包含以下组件：
+
+**核心函数：**
+
+| 函数名 | 功能 |
+|--------|------|
+| `calculate_position_size()` | 改进Kelly公式: `position = (signal × risk_budget) / volatility` |
+| `adaptive_threshold()` | 波动率自适应阈值调整 |
+| `compute_performance_metrics()` | 计算绩效指标（盈亏比、Calmar、Sharpe、胜率） |
+
+**`DrawdownTracker` 类 — 回撤保护**
+
+实时跟踪账户权益回撤，当回撤超过阈值时自动缩减仓位：
+
+| 回撤水平 | 行为 | 默认阈值 |
+|----------|------|----------|
+| < warning_level | 正常仓位（乘数=1.0） | < 8% |
+| warning_level ~ max_drawdown | 线性缩减（1.0→0.0） | 8%~15% |
+| ≥ max_drawdown | 仓位为零（乘数=0.0） | ≥ 15% |
+
+**`DailyRiskLimit` 类 — 日内风险限额**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `max_daily_loss` | 0.03 | 单日最大亏损比例（3%） |
+| `max_daily_trades` | 20 | 单日最大交易次数 |
+
+达到限额后停止开新仓，新交易日自动重置。
+
+**`RiskBudgetManager` 类 — 综合风险管理器（增强版）**
+
+整合Kelly仓位计算 + 回撤保护 + 日内限额 + 绩效监控。
+
+使用示例:
+```python
+from models.position_sizing import RiskBudgetManager
+
+risk_mgr = RiskBudgetManager(
+    account_risk=0.02,      # 单笔风险2%
+    max_position=1.0,       # 最大仓位100%
+    base_threshold=0.55,    # 基础信号阈值
+    max_drawdown=0.15,      # 最大回撤15%
+    drawdown_warning=0.08,  # 回撤预警8%
+    max_daily_loss=0.03,    # 日内最大亏损3%
+    max_daily_trades=20,    # 日内最大交易次数
+)
+
+# 生成交易信号和仓位
+signals = risk_mgr.compute_signals(probabilities, volatility)
+print(signals["position_size"])       # 仓位大小（含回撤缩减）
+print(signals["drawdown_multiplier"]) # 回撤缩减乘数
+
+# 记录交易结果
+risk_mgr.record_trade_result(pnl=100, trade_date="2024-01-15")
+
+# 查看绩效指标
+perf = risk_mgr.get_performance_metrics()
+print(f"盈亏比: {perf['profit_factor']:.2f}")
+print(f"Calmar: {perf['calmar_ratio']:.2f}")
+print(f"Sharpe: {perf['sharpe_ratio']:.2f}")
+```
+
+**绩效指标说明：**
+
+| 指标 | 说明 | 优秀阈值 |
+|------|------|----------|
+| `profit_factor` | 盈亏比（总盈利/总亏损） | > 1.8 |
+| `calmar_ratio` | Calmar比率（年化收益/最大回撤） | > 2.0 |
+| `sharpe_ratio` | Sharpe比率（风险调整后收益） | > 1.5 |
+| `win_rate` | 胜率 | > 55% |
+| `max_drawdown` | 最大回撤 | < 15% |
 
 ### `backtest/feature_selector.py` — 回测与特征选择模块
 
@@ -444,8 +587,13 @@ python ml_pipeline.py --period 5min --target future_direction --n-rows 2000
 # 步骤3: 特征重要性 Top 10
 vwap_dev             0.020     ← 新增微观结构特征入选Top 10
 
-# 步骤4: 仓位管理
-仓位管理: 测试集产生 285 个交易信号
+# 步骤4: 仓位管理（增强版 — 含回撤保护和绩效指标）
+仓位管理: 测试集产生 278 个交易信号
+  回撤保护乘数: 1.00
+  模拟绩效: 胜率=53.96%, 盈亏比=1.17, Sharpe=1.26
+
+# 步骤4.5: 自适应模块（漂移检测 + 动态阈值）
+自适应模块: 漂移=none, 阈值=0.554, 需要重训=False
 
 # 步骤5: 特征组评估（10个组，含新增2组）
 特征组评估结果:
@@ -474,5 +622,8 @@ vwap_dev             0.020     ← 新增微观结构特征入选Top 10
 2. **微观结构特征入选最佳特征集** — `vwap_dev` 和 `vol_zscore` 被综合特征选择选入Top 20
 3. **特征总数提升** — 从62-70个增至84-92个（含10个市场状态特征 + 12个增强特征）
 4. **Numba加速** — 增强特征模块使用numba加速的rolling计算，适合高频数据场景
+5. **回撤保护** — 自动追踪账户回撤，达到预警水平(8%)后线性缩减仓位，达到最大回撤(15%)后停止开仓
+6. **自适应阈值** — 基于波动率和模型性能动态调整交易阈值，高波动率/低性能时自动提高阈值
+7. **概念漂移检测** — 实时监控模型性能，当准确率下降超过10%时触发重训建议
 
 > **注意**：当前使用模拟随机数据，实际商品期货数据的预测效果会因市场行情不同而有差异。接入真实行情数据后需要重新训练和评估。
