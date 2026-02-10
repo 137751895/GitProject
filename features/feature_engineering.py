@@ -325,6 +325,11 @@ def compute_all_features(df, period="5min"):
     # 缺口衰减特征
     features = pd.concat([features, compute_gap_decay_features(df)], axis=1)
 
+    # 深度特征变换（非线性、跨周期、变化率、条件、交互）
+    from features.feature_transforms import compute_all_transforms
+    deep_features = compute_all_transforms(features, raw_df=df)
+    features = pd.concat([features, deep_features], axis=1)
+
     return features
 
 

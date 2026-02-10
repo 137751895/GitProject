@@ -27,7 +27,8 @@ from models.adaptive_learning import AdaptiveModelManager
 from backtest.feature_selector import FeatureSelector, get_recommended_feature_groups
 from config import (ML_FRAMEWORKS, PREDICTION_TARGETS, BACKTEST_CONFIG,
                     ENSEMBLE_CONFIG, POSITION_CONFIG, ADAPTIVE_CONFIG,
-                    MULTI_TIMEFRAME_CONFIG, LSTM_FEATURE_SELECTION_CONFIG)
+                    MULTI_TIMEFRAME_CONFIG, LSTM_FEATURE_SELECTION_CONFIG,
+                    SMART_LABEL_CONFIG, HYBRID_SYSTEM_CONFIG)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -556,6 +557,162 @@ def run_multi_timeframe(n_rows=5000, target="future_direction"):
     logger.info("多时间框架协同交易系统完成!")
 
 
+def run_smart_labels(n_rows=5000, period="5min"):
+    """
+    运行智能标签生成演示。
+
+    使用SmartLabelGenerator替代简单二元分类标签，
+    生成五级交易信号和信号质量评分。
+
+    Parameters
+    ----------
+    n_rows : int
+        模拟数据行数
+    period : str
+        K线周期
+    """
+    from models.smart_labels import SmartLabelGenerator
+
+    logger.info("=" * 60)
+    logger.info("智能标签生成系统")
+    logger.info(f"周期: {period}")
+    logger.info("=" * 60)
+
+    # Step 1: 生成数据
+    logger.info("生成模拟数据...")
+    df = generate_sample_data(n_rows=n_rows, period=period)
+
+    # Step 2: 生成智能标签
+    horizon = SMART_LABEL_CONFIG["horizon"].get(period, 3)
+    generator = SmartLabelGenerator(
+        horizon=horizon,
+        base_threshold=SMART_LABEL_CONFIG.get("base_threshold", 0.001),
+        strong_multiplier=SMART_LABEL_CONFIG.get("strong_multiplier", 2.0),
+        vol_window=SMART_LABEL_CONFIG.get("vol_window", 20),
+        volume_window=SMART_LABEL_CONFIG.get("volume_window", 60),
+        quality_weights=SMART_LABEL_CONFIG.get("quality_weights"),
+    )
+    labels = generator.create_labels(df)
+
+    # Step 3: 统计
+    signal_col = labels["trading_signal"]
+    valid = signal_col.dropna()
+    logger.info(f"\n标签统计 (共{len(valid)}个有效样本):")
+    for sig_val in [-2, -1, 0, 1, 2]:
+        count = int((valid == sig_val).sum())
+        pct = count / len(valid) * 100 if len(valid) > 0 else 0
+        desc = generator.get_signal_description(sig_val)
+        logger.info(f"  {desc}: {count} ({pct:.1f}%)")
+
+    quality = labels["signal_quality"].dropna()
+    logger.info(f"\n信号质量统计:")
+    logger.info(f"  平均质量: {quality.mean():.3f}")
+    logger.info(f"  高质量信号 (>0.6): {int((quality > 0.6).sum())}")
+
+    # Step 4: 使用智能标签训练模型
+    logger.info(f"\n使用智能标签训练模型...")
+    X, _ = prepare_data(df, period=period, target_name="future_direction")
+
+    # 对齐标签
+    aligned = labels.loc[X.index]
+    y_smart = aligned["trading_signal"]
+    y_smart = y_smart.dropna()
+    X_aligned = X.loc[y_smart.index]
+
+    if len(X_aligned) > 100:
+        # 重映射信号到非负整数 (-2→0, -1→1, 0→2, 1→3, 2→4) 以兼容XGBoost
+        y_remapped = y_smart + 2
+        model, metrics = train_and_evaluate(
+            X_aligned, y_remapped, period=period, task="classification"
+        )
+        logger.info(f"智能标签模型测试集: {metrics['test']}")
+
+    logger.info("=" * 60)
+    logger.info("智能标签生成系统完成!")
+    logger.info("=" * 60)
+
+
+def run_hybrid_system(n_rows=5000, period="5min"):
+    """
+    运行混合智能交易系统演示。
+
+    使用五个独立交易专家（趋势跟踪、均值回归、突破、量价、持仓确认）
+    通过加权投票生成交易信号。
+
+    Parameters
+    ----------
+    n_rows : int
+        模拟数据行数
+    period : str
+        K线周期
+    """
+    from models.hybrid_trading import HybridTradingSystem
+
+    logger.info("=" * 60)
+    logger.info("混合智能交易系统")
+    logger.info(f"周期: {period}")
+    logger.info("=" * 60)
+
+    # Step 1: 生成数据
+    logger.info("生成模拟数据...")
+    df = generate_sample_data(n_rows=n_rows, period=period)
+
+    # Step 2: 创建混合系统
+    system = HybridTradingSystem(
+        signal_threshold=HYBRID_SYSTEM_CONFIG.get("signal_threshold", 0.3),
+        max_position=HYBRID_SYSTEM_CONFIG.get("max_position", 0.2),
+        target_win_rate=HYBRID_SYSTEM_CONFIG.get("target_win_rate", 0.7),
+        target_win_loss_ratio=HYBRID_SYSTEM_CONFIG.get("target_win_loss_ratio", 2.0),
+    )
+
+    # Step 3: 单点预测演示
+    logger.info("\n单点预测 (最新K线):")
+    result = system.predict(df)
+    logger.info(f"  最终信号: {result['final_signal']} (1=做多, -1=做空, 0=观望)")
+    logger.info(f"  建议仓位: {result['position_size']:.4f}")
+    logger.info(f"  综合置信度: {result['confidence']:.4f}")
+    logger.info(f"  融合信号: {result['fused_signal']:.4f}")
+    logger.info(f"  专家一致性: {result['agreement']:.2%}")
+
+    logger.info("\n各专家信号明细:")
+    expert_names = {
+        "trend": "趋势跟踪",
+        "mean_reversion": "均值回归",
+        "breakout": "突破交易",
+        "volume_price": "量价关系",
+        "oi_confirmation": "持仓确认",
+    }
+    for name, info in result["experts_breakdown"].items():
+        cn_name = expert_names.get(name, name)
+        logger.info(f"  {cn_name}: 信号={info['signal']:+.1f}, "
+                     f"置信度={info['confidence']:.3f}")
+
+    # Step 4: 批量预测
+    batch_window = HYBRID_SYSTEM_CONFIG.get("batch_window", 100)
+    logger.info(f"\n批量预测 (窗口={batch_window})...")
+    batch_results = system.predict_batch(df, window=batch_window)
+
+    n_long = int((batch_results["signal"] == 1).sum())
+    n_short = int((batch_results["signal"] == -1).sum())
+    n_neutral = int((batch_results["signal"] == 0).sum())
+    total = len(batch_results)
+
+    logger.info(f"  总样本: {total}")
+    logger.info(f"  做多信号: {n_long} ({n_long/total*100:.1f}%)")
+    logger.info(f"  做空信号: {n_short} ({n_short/total*100:.1f}%)")
+    logger.info(f"  观望: {n_neutral} ({n_neutral/total*100:.1f}%)")
+    logger.info(f"  平均置信度: {batch_results['confidence'].mean():.4f}")
+    logger.info(f"  平均一致性: {batch_results['agreement'].mean():.2%}")
+
+    active = batch_results[batch_results["signal"] != 0]
+    if len(active) > 0:
+        logger.info(f"  活跃信号平均仓位: {active['position_size'].mean():.4f}")
+
+    logger.info("=" * 60)
+    logger.info("混合智能交易系统完成!")
+    logger.info("=" * 60)
+
+
 def main():
     """主流程入口"""
     parser = argparse.ArgumentParser(description="商品期货机器学习量化模型")
@@ -575,7 +732,21 @@ def main():
                         help="运行15分钟LSTM特征预筛选流程（XGBoost筛选→LSTM训练）")
     parser.add_argument("--n-features", type=int, default=None,
                         help="特征预筛选: 选择的特征数量 (default: 从配置读取)")
+    parser.add_argument("--smart-labels", action="store_true",
+                        help="运行智能标签生成系统（五级信号+质量评分）")
+    parser.add_argument("--hybrid", action="store_true",
+                        help="运行混合智能交易系统（五专家加权投票）")
     args = parser.parse_args()
+
+    # 智能标签模式
+    if args.smart_labels:
+        run_smart_labels(n_rows=args.n_rows, period=args.period)
+        return
+
+    # 混合专家系统模式
+    if args.hybrid:
+        run_hybrid_system(n_rows=args.n_rows, period=args.period)
+        return
 
     # 多时间框架协同模式
     if args.multi_timeframe:

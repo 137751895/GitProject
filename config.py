@@ -198,6 +198,22 @@ FEATURE_HIERARCHY = {
             "reversal_score", "regime_duration", "regime_change_prob",
         ],
     },
+    "level6_transforms": {
+        "description": "深度变换特征 — 非线性/跨周期/变化率/交互",
+        "features": [
+            "rsi_14_squared", "rsi_14_log", "rsi_14_rank", "rsi_14_zscore",
+            "macd_hist_squared", "macd_hist_log", "macd_hist_rank", "macd_hist_zscore",
+            "atr_squared", "atr_log", "atr_rank", "atr_zscore",
+            "vol_ratio_squared", "vol_ratio_log", "vol_ratio_rank", "vol_ratio_zscore",
+            "rsi_fast_slow_ratio", "volatility_ratio_fast_slow", "ma_cross_ratio",
+            "rsi_14_velocity", "rsi_14_acceleration", "rsi_14_direction_consistency",
+            "macd_hist_velocity", "macd_hist_acceleration", "macd_hist_direction_consistency",
+            "boll_width_velocity", "boll_width_acceleration", "boll_width_direction_consistency",
+            "rsi_high_vol", "rsi_low_vol", "momentum_in_trend", "momentum_in_range",
+            "rsi_volume_interaction", "momentum_vol_interaction",
+            "oi_price_alignment", "oi_price_magnitude",
+        ],
+    },
 }
 
 # 多时间框架协同配置
@@ -255,4 +271,32 @@ ENHANCED_FEATURE_CONFIG = {
         "enabled": True,
         "description": "使用numba加速核心指标计算（rolling_mean, rsi, macd等），比pandas快10-50倍",
     },
+}
+
+# 深度特征变换配置
+FEATURE_TRANSFORM_CONFIG = {
+    # 非线性变换: 对哪些特征做平方/对数/排名/Z-score变换
+    "nonlinear_features": ["rsi_14", "macd_hist", "atr", "vol_ratio"],
+    # 特征变化率: 对哪些特征计算一阶/二阶导数
+    "velocity_features": ["rsi_14", "macd_hist", "boll_width"],
+    "enabled": True,
+}
+
+# 智能标签配置
+SMART_LABEL_CONFIG = {
+    "horizon": {"1min": 5, "5min": 3, "15min": 2},
+    "base_threshold": 0.001,        # 基础信号阈值
+    "strong_multiplier": 2.0,       # 强信号 = base_threshold × multiplier
+    "vol_window": 20,               # 波动率计算窗口
+    "volume_window": 60,            # 成交量参考窗口
+    "quality_weights": (0.4, 0.3, 0.2, 0.1),  # (return, oi, volume, vol_env)
+}
+
+# 混合专家系统配置
+HYBRID_SYSTEM_CONFIG = {
+    "signal_threshold": 0.3,        # 最低融合信号强度阈值
+    "max_position": 0.2,            # 最大仓位比例 (20%)
+    "target_win_rate": 0.7,         # Kelly公式目标胜率
+    "target_win_loss_ratio": 2.0,   # Kelly公式目标盈亏比
+    "batch_window": 100,            # 批量预测滚动窗口
 }

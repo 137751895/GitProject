@@ -554,4 +554,15 @@ def get_recommended_feature_groups():
         "高级波动率": [
             "volatility_regime", "vol_ratio", "atr_pct", "range_pct",
         ],
+        "深度变换": [
+            "rsi_14_squared", "rsi_14_log", "rsi_14_rank", "rsi_14_zscore",
+            "macd_hist_squared", "macd_hist_log", "macd_hist_rank", "macd_hist_zscore",
+            "rsi_fast_slow_ratio", "volatility_ratio_fast_slow", "ma_cross_ratio",
+            "rsi_14_velocity", "rsi_14_acceleration", "rsi_14_direction_consistency",
+            "macd_hist_velocity", "macd_hist_acceleration",
+            "rsi_volume_interaction", "momentum_vol_interaction",
+            "oi_price_alignment", "oi_price_magnitude",
+            "rsi_high_vol", "rsi_low_vol",
+            "momentum_in_trend", "momentum_in_range",
+        ],
     }
