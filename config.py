@@ -208,6 +208,23 @@ MULTI_TIMEFRAME_CONFIG = {
     "min_grade": "C",                # 最低信号质量等级（A/B/C，低于此等级过滤）
 }
 
+# LSTM特征预筛选配置（15分钟周期专用）
+# 使用XGBoost作为特征筛选器，筛选后的特征子集输入LSTM训练
+LSTM_FEATURE_SELECTION_CONFIG = {
+    "xgb_params": {
+        "n_estimators": 200,
+        "max_depth": 5,
+        "learning_rate": 0.05,
+        "subsample": 0.8,
+        "colsample_bytree": 0.8,
+    },
+    "selection": {
+        "n_features": 25,       # LSTM推荐特征数量
+        "threshold": "median",  # 重要性阈值
+        "cv_splits": 5,         # 交叉验证折数
+    },
+}
+
 # 增强特征配置
 ENHANCED_FEATURE_CONFIG = {
     # 微观结构特征

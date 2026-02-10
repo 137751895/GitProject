@@ -27,7 +27,7 @@ from models.adaptive_learning import AdaptiveModelManager
 from backtest.feature_selector import FeatureSelector, get_recommended_feature_groups
 from config import (ML_FRAMEWORKS, PREDICTION_TARGETS, BACKTEST_CONFIG,
                     ENSEMBLE_CONFIG, POSITION_CONFIG, ADAPTIVE_CONFIG,
-                    MULTI_TIMEFRAME_CONFIG)
+                    MULTI_TIMEFRAME_CONFIG, LSTM_FEATURE_SELECTION_CONFIG)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -320,6 +320,139 @@ def run_feature_selection(X, y, period="5min", task="classification"):
     }
 
 
+def run_lstm_feature_selection(n_rows=5000, target="future_direction",
+                               n_features=None):
+    """
+    运行15分钟LSTM特征预筛选流程。
+
+    流程:
+        1. 计算全量特征
+        2. 使用XGBoost进行特征重要性评估（TimeSeriesSplit CV）
+        3. 筛选Top N特征
+        4. 使用筛选后的特征训练LSTM
+        5. 对比全量特征 vs 筛选特征的效果
+
+    Parameters
+    ----------
+    n_rows : int
+        模拟数据行数
+    target : str
+        预测目标名称
+    n_features : int, optional
+        选择特征数量，None时从配置读取
+    """
+    from models.xgb_feature_selector import XGBFeatureSelector
+
+    sel_cfg = LSTM_FEATURE_SELECTION_CONFIG["selection"]
+    if n_features is None:
+        n_features = sel_cfg["n_features"]
+
+    task = "classification" if target in ("future_direction", "future_regime") else "regression"
+
+    logger.info("=" * 60)
+    logger.info("15分钟LSTM模型训练 — XGBoost特征预筛选")
+    logger.info("=" * 60)
+
+    # Step 1: 生成数据和全量特征
+    logger.info("Step 1: 生成15分钟模拟数据...")
+    df = generate_sample_data(n_rows=n_rows, period="15min")
+    X, y = prepare_data(df, period="15min", target_name=target)
+    logger.info(f"原始特征数量: {X.shape[1]}, 样本数量: {X.shape[0]}")
+
+    # Step 2: XGBoost特征筛选
+    logger.info(f"\nStep 2: XGBoost特征筛选 (目标: {n_features}个特征)...")
+    xgb_params = LSTM_FEATURE_SELECTION_CONFIG.get("xgb_params", {})
+    selector = XGBFeatureSelector(
+        n_features=n_features,
+        threshold=sel_cfg.get("threshold", "median"),
+        cv_splits=sel_cfg.get("cv_splits", 5),
+        xgb_params=xgb_params,
+    )
+    selected_features, importance_df = selector.fit_select(X, y)
+
+    # Step 3: 特征重要性报告
+    logger.info(f"\nStep 3: 特征重要性排名 (Top 15):")
+    top15 = importance_df.head(15)
+    for _, row in top15.iterrows():
+        logger.info(f"  {row['feature']:30s}  importance={row['importance']:.4f}  std={row['std']:.4f}")
+
+    # 按特征组分析
+    feature_groups = get_recommended_feature_groups()
+    group_analysis = selector.get_feature_groups_importance(feature_groups)
+    logger.info(f"\nStep 3b: 特征组重要性分析:")
+    for group_name, row in group_analysis.iterrows():
+        logger.info(f"  {group_name:12s}  score={row['score']:.4f}  "
+                     f"入选={int(row['n_selected'])}/{int(row['n_features'])}")
+
+    # Step 4: 动态特征数量建议
+    logger.info(f"\nStep 4: 动态特征数量搜索...")
+    dynamic_result = selector.dynamic_feature_count(
+        X, y, min_features=10, max_features=min(40, X.shape[1]), step=5,
+    )
+    optimal_n = dynamic_result["optimal_n_features"]
+    logger.info(f"  建议最佳特征数量: {optimal_n}")
+    for _, row in dynamic_result["search_results"].iterrows():
+        marker = " ←" if int(row["n_features"]) == optimal_n else ""
+        logger.info(f"    n={int(row['n_features']):3d}  accuracy={row['accuracy']:.4f}  "
+                     f"std={row['std']:.4f}{marker}")
+
+    # Step 5: 使用筛选后特征训练LSTM
+    X_selected = X[selected_features]
+    logger.info(f"\nStep 5: 使用筛选后的 {len(selected_features)} 个特征训练LSTM...")
+
+    train_ratio = BACKTEST_CONFIG["train_ratio"]
+    val_ratio = BACKTEST_CONFIG["validation_ratio"]
+    n = len(X_selected)
+    train_end = int(n * train_ratio)
+    val_end = int(n * (train_ratio + val_ratio))
+
+    X_tr, y_tr = X_selected.iloc[:train_end], y.iloc[:train_end]
+    X_va, y_va = X_selected.iloc[train_end:val_end], y.iloc[train_end:val_end]
+    X_te, y_te = X_selected.iloc[val_end:], y.iloc[val_end:]
+
+    try:
+        lstm_model = create_model("15min", task=task)
+        lstm_model.train(X_tr, y_tr, X_va, y_va)
+        selected_metrics = lstm_model.evaluate(X_te, y_te)
+        logger.info(f"  筛选特征LSTM测试集: {selected_metrics}")
+
+        # Step 6: 对比实验（全量特征 vs 筛选特征）
+        logger.info(f"\nStep 6: 对比实验 — 全量特征 vs 筛选特征")
+        X_tr_full = X.iloc[:train_end]
+        X_va_full = X.iloc[train_end:val_end]
+        X_te_full = X.iloc[val_end:]
+
+        lstm_full = create_model("15min", task=task)
+        lstm_full.train(X_tr_full, y.iloc[:train_end],
+                        X_va_full, y.iloc[train_end:val_end])
+        full_metrics = lstm_full.evaluate(X_te_full, y.iloc[val_end:])
+        logger.info(f"  全量特征LSTM测试集: {full_metrics}")
+
+        # 对比
+        if task == "classification":
+            full_acc = full_metrics.get("accuracy", 0)
+            sel_acc = selected_metrics.get("accuracy", 0)
+            improvement = sel_acc - full_acc
+            logger.info(f"\n  全量特征 ({X.shape[1]}个): 准确率 = {full_acc:.4f}")
+            logger.info(f"  筛选特征 ({len(selected_features)}个): 准确率 = {sel_acc:.4f}")
+            logger.info(f"  改进: {improvement:+.4f} ({improvement * 100:+.2f}%)")
+            logger.info(f"  特征减少: {X.shape[1]}→{len(selected_features)} "
+                         f"(-{(1 - len(selected_features) / X.shape[1]) * 100:.0f}%)")
+        else:
+            full_r2 = full_metrics.get("r2", 0)
+            sel_r2 = selected_metrics.get("r2", 0)
+            logger.info(f"\n  全量特征 ({X.shape[1]}个): R² = {full_r2:.4f}")
+            logger.info(f"  筛选特征 ({len(selected_features)}个): R² = {sel_r2:.4f}")
+    except ImportError:
+        logger.warning("  TensorFlow未安装，跳过LSTM训练对比。")
+        logger.info("  特征筛选结果已完成（Steps 1-4），安装TensorFlow后可训练LSTM。")
+        logger.info(f"  筛选特征列表: {selected_features}")
+
+    logger.info("=" * 60)
+    logger.info("15分钟LSTM特征预筛选流程完成!")
+    logger.info("=" * 60)
+
+
 def run_multi_timeframe(n_rows=5000, target="future_direction"):
     """
     运行多时间框架协同交易演示。
@@ -438,11 +571,23 @@ def main():
                         help="跳过特征选择步骤")
     parser.add_argument("--multi-timeframe", action="store_true",
                         help="运行多时间框架协同交易系统")
+    parser.add_argument("--feature-selection", action="store_true",
+                        help="运行15分钟LSTM特征预筛选流程（XGBoost筛选→LSTM训练）")
+    parser.add_argument("--n-features", type=int, default=None,
+                        help="特征预筛选: 选择的特征数量 (default: 从配置读取)")
     args = parser.parse_args()
 
     # 多时间框架协同模式
     if args.multi_timeframe:
         run_multi_timeframe(n_rows=args.n_rows, target=args.target)
+        return
+
+    # 15分钟LSTM特征预筛选模式
+    if args.feature_selection:
+        run_lstm_feature_selection(
+            n_rows=args.n_rows, target=args.target,
+            n_features=args.n_features,
+        )
         return
 
     task = "classification" if args.target in ("future_direction", "future_regime") else "regression"
