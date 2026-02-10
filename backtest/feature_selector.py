@@ -278,7 +278,7 @@ class FeatureSelector:
         return results_df
 
     def stability_selection(self, X, y, n_bootstrap=20, sample_fraction=0.7,
-                            threshold=0.6):
+                            threshold=0.6, lasso_cv=3, lasso_max_iter=2000):
         """
         稳定性特征选择 (Stability Selection)。
 
@@ -324,7 +324,7 @@ class FeatureSelector:
             X_sample = X_scaled.iloc[indices]
             y_sample = y.iloc[indices]
 
-            lasso = LassoCV(cv=3, random_state=i, max_iter=2000)
+            lasso = LassoCV(cv=lasso_cv, random_state=i, max_iter=lasso_max_iter)
             lasso.fit(X_sample, y_sample)
 
             selected = np.abs(lasso.coef_) > 0
@@ -404,8 +404,11 @@ class FeatureSelector:
             if importance is None:
                 break
 
-            # 移除importance最低的step个特征
-            features_to_remove = list(importance.tail(step).index)
+            # 移除importance最低的特征，确保不低于min_features
+            n_to_remove = min(step, len(current_features) - min_features)
+            if n_to_remove <= 0:
+                break
+            features_to_remove = list(importance.tail(n_to_remove).index)
             current_features = [f for f in current_features
                                 if f not in features_to_remove]
 

@@ -349,7 +349,11 @@ def compute_prediction_targets(df, horizon=5):
     targets["future_volatility"] = returns.shift(-1).rolling(window=horizon).std()
 
     # 多分类预测目标（五分位）
-    bins = [-np.inf, -0.005, -0.001, 0.001, 0.005, np.inf]
+    from config import REGIME_CONFIG
+    regime_bins = REGIME_CONFIG.get(
+        "bins", [-np.inf, -0.005, -0.001, 0.001, 0.005, np.inf]
+    )
+    bins = regime_bins
     labels = [0, 1, 2, 3, 4]  # strong_down, weak_down, neutral, weak_up, strong_up
     targets["future_regime"] = pd.cut(
         targets["future_return"], bins=bins, labels=labels

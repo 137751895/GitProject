@@ -156,6 +156,7 @@ def train_and_evaluate(X, y, period="5min", task="classification"):
     X_test, y_test = X.iloc[val_end:], y.iloc[val_end:]
 
     logger.info(f"创建 {period} 周期模型 (推荐框架: {ML_FRAMEWORKS[period]})...")
+    # 15分钟周期使用LSTM不参与集成，集成仅用于LightGBM+XGBoost周期
     use_ensemble = ENSEMBLE_CONFIG.get("enabled", False) and period != "15min"
     if use_ensemble:
         logger.info("使用 LightGBM+XGBoost 集成模型...")

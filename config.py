@@ -89,6 +89,8 @@ REGIME_CONFIG = {
     "vol_quantile_high": 0.7,
     "vol_quantile_low": 0.3,
     "trend_threshold": 0.3,
+    # 五分位预测目标的收益率分箱阈值: [强跌 | -0.5% | 弱跌 | -0.1% | 中性 | +0.1% | 弱涨 | +0.5% | 强涨]
+    "bins": [float("-inf"), -0.005, -0.001, 0.001, 0.005, float("inf")],
 }
 
 # 集成模型配置
