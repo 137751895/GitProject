@@ -328,6 +328,44 @@ def compute_all_features(df, period="5min"):
     return features
 
 
+def get_feature_hierarchy(features_df=None):
+    """
+    获取分层特征结构。
+
+    将特征按层级组织，从基础价格到高阶跨周期特征：
+    - Level 1 (基础价格): OHLCV直接衍生的特征
+    - Level 2 (趋势): 均线、布林带、趋势方向
+    - Level 3 (动量与波动率): 技术指标振荡器
+    - Level 4 (微观结构): 资金流向、持仓分析
+    - Level 5 (跨周期/高级): 市场状态、波动率状态
+
+    Parameters
+    ----------
+    features_df : pd.DataFrame, optional
+        特征矩阵。若提供，只返回实际存在的特征。
+
+    Returns
+    -------
+    dict
+        分层特征字典，每层包含 description 和 features 列表
+    """
+    from config import FEATURE_HIERARCHY
+
+    if features_df is None:
+        return FEATURE_HIERARCHY
+
+    # 只保留实际存在于 features_df 中的特征
+    available = set(features_df.columns)
+    result = {}
+    for level, info in FEATURE_HIERARCHY.items():
+        matched = [f for f in info["features"] if f in available]
+        result[level] = {
+            "description": info["description"],
+            "features": matched,
+        }
+    return result
+
+
 def compute_prediction_targets(df, horizon=5):
     """
     计算预测目标。

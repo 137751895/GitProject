@@ -61,6 +61,7 @@ GitProject/
 | `ENSEMBLE_CONFIG` | 集成模型配置 |
 | `POSITION_CONFIG` | 仓位管理配置 |
 | `ENHANCED_FEATURE_CONFIG` | 增强特征配置（微观结构/高级波动率/缺口衰减/Numba加速） |
+| `FEATURE_HIERARCHY` | 5层分层特征结构（level1_price → level5_cross） |
 
 ### `features/feature_engineering.py` — 特征工程主模块
 
@@ -88,6 +89,7 @@ GitProject/
 | `compute_volatility_features()` | 波动率特征 | `volatility_*`, `return_ma_*`, `log_return` |
 | `compute_price_position()` | 价格位置特征 | `price_position`, `dist_to_high`, `dist_to_low` |
 | `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减） | 81~89个特征 |
+| `get_feature_hierarchy()` | **获取分层特征结构**，按5层层级组织全部特征 | 层级字典 |
 | `compute_prediction_targets()` | 预测目标 | `future_return`, `future_direction`, `future_volatility`, `future_regime` |
 
 ### `features/feature_engineering_enhanced.py` — 增强特征模块
@@ -155,98 +157,86 @@ LightGBM + XGBoost 加权集成，基于验证集自动分配权重。
 
 ## 特征列表
 
-系统根据K线周期自动计算 **81~89个** 衍生特征，按类别分组如下：
+### 分层特征结构 (Feature Hierarchy)
 
-### 1. 价格趋势类（11个特征）
+系统采用 **5层分层特征结构**，从基础价格到高阶跨周期特征逐层构建。这种层级设计的优势是：
+- **低层特征**（Level 1-2）计算快、解释性强，可用于基础过滤
+- **中层特征**（Level 3）技术指标振荡器，覆盖动量和波动率信号
+- **高层特征**（Level 4-5）信息密度大，适合捕捉复杂市场模式
+- 模型可以按层级选择性地加载特征，灵活控制复杂度
+
+```
+优化前（平面特征列表）：
+  features = ['ma_5', 'rsi_14', 'vol_ma_5', 'divergence', ...]
+
+优化后（分层特征结构）：
+  FEATURE_HIERARCHY = {
+      'level1_price':    基础价格特征 — OHLCV直接衍生 (13个)
+      'level2_trend':    趋势特征 — 均线与布林带 (16个)
+      'level3_momentum': 动量与波动率特征 — 技术指标振荡器 (30个)
+      'level4_micro':    微观结构特征 — 资金流向与持仓分析 (16个)
+      'level5_cross':    跨周期与高级组合特征 (6个)
+  }
+```
+
+#### Level 1: 基础价格特征（13个）— OHLCV直接衍生
+
+| 特征名 | 说明 |
+|--------|------|
+| `close_pos` | K线内相对位置 |
+| `body_ratio` / `upper_shadow_ratio` / `lower_shadow_ratio` | 实体比和影线比 |
+| `candle_direction` / `amplitude` | 涨跌方向和振幅 |
+| `gap` / `gap_ratio` | 跳空缺口 |
+| `price_position` / `dist_to_high` / `dist_to_low` | 价格在区间中的位置 |
+| `log_return` | 对数收益率 |
+| `range_pct` | 振幅百分比 |
+
+#### Level 2: 趋势特征（16个）— 均线与布林带
 
 | 特征名 | 说明 |
 |--------|------|
 | `ma_5`, `ma_10`, `ma_20`, `ma_60` | 简单移动平均线 |
 | `ema_5`, `ema_10`, `ema_20`, `ema_60` | 指数移动平均线 |
-| `price_position` | 价格在区间中的相对位置 (0~1) |
-| `dist_to_high` | 距离区间最高点的距离比 |
-| `dist_to_low` | 距离区间最低点的距离比 |
+| `boll_upper` / `boll_mid` / `boll_lower` / `boll_width` / `boll_pct_b` | 布林带系列 |
+| `trend_strength` / `trend_direction` / `trend_acceleration` | 趋势强度、方向、加速度 |
 
-### 2. 布林带类（5个特征）
-
-| 特征名 | 说明 |
-|--------|------|
-| `boll_upper` / `boll_mid` / `boll_lower` | 布林带上轨/中轨/下轨 |
-| `boll_width` | 布林带宽度 |
-| `boll_pct_b` | %B指标 |
-
-### 3. 动量类（12个特征）
+#### Level 3: 动量与波动率特征（30个）— 技术指标振荡器
 
 | 特征名 | 说明 |
 |--------|------|
 | `rsi_14` / `rsi_6` | RSI |
 | `macd_dif` / `macd_dea` / `macd_hist` | MACD |
 | `kdj_k` / `kdj_d` / `kdj_j` | KDJ |
-| `cci` | CCI |
-| `williams_r` | 威廉指标 |
-| `roc_12` / `roc_6` | 变动率 |
-
-### 4. 成交量类（7~9个特征）
-
-| 特征名 | 说明 |
-|--------|------|
-| `vol_ma_*` / `vol_ratio_*` | 成交量均线和量比 |
-| `vol_change` / `obv` / `vwap` | 成交量变化率、能量潮、加权均价 |
-
-### 5. 波动率类（7~9个特征）
-
-| 特征名 | 说明 |
-|--------|------|
-| `tr` / `atr` | 真实波幅 / 平均真实波幅 |
+| `cci` / `williams_r` / `roc_12` / `roc_6` | CCI / 威廉 / 变动率 |
+| `obv` / `vwap` | 能量潮 / 加权均价 |
+| `tr` / `atr` / `atr_pct` | 真实波幅 |
 | `volatility_*` / `return_ma_*` | 滚动波动率和收益率均值 |
-| `log_return` | 对数收益率 |
+| `vol_ma_*` / `vol_ratio_*` / `vol_change` | 成交量指标 |
 
-### 6. 持仓量/仓差类（9个特征）
-
-| 特征名 | 说明 |
-|--------|------|
-| `oi_change` / `oi_change_pct` | 仓差和仓差变化率 |
-| `oi_ma_*` / `oi_change_ma_*` | 持仓量和仓差移动平均 |
-| `vol_oi_ratio` | 量仓比 |
-
-### 7. K线形态类（7个特征）
-
-| 特征名 | 说明 |
-|--------|------|
-| `body_ratio` / `upper_shadow_ratio` / `lower_shadow_ratio` | 实体比和影线比 |
-| `candle_direction` / `amplitude` | 涨跌方向和振幅 |
-| `gap` / `gap_ratio` | 跳空缺口 |
-
-### 8. 市场状态类（7个特征）
-
-| 特征名 | 说明 |
-|--------|------|
-| `regime_volatility` | 滚动波动率 |
-| `trend_strength` / `trend_direction` / `trend_acceleration` | 趋势强度、方向、加速度 |
-| `volatility_rank` / `volatility_change` | 波动率排名和变化率 |
-| `market_regime` | 市场状态编码（0~3） |
-
-### 9. 微观结构类（8个特征）— 新增
+#### Level 4: 微观结构特征（16个）— 资金流向与持仓分析
 
 | 特征名 | 计算公式 | 说明 |
 |--------|----------|------|
 | `divergence` | `sign(持仓变化) × sign(价格变化)` | 资金流向与价格背离 |
-| `vwap_dev` | `(close - VWAP) / VWAP` | 价格与成交量加权均价的偏离 |
+| `vwap_dev` | `(close - VWAP) / VWAP` | 价格与VWAP偏离 |
 | `vol_state` | `ATR14 / 60日均价` | 波动率状态（标准化） |
 | `mom_slope` | `5周期价格斜率 / 当前价格` | 动量加速度 |
-| `close_pos` | `(close - low) / (high - low)` | K线内相对位置 |
 | `rsi_slope` | RSI的5周期线性回归斜率 | RSI变化速率 |
 | `vol_zscore` | `(volume - vol_ma20) / vol_std20` | 成交量Z分数 |
-| `gap_decay` | `gap × exp(-秒数/300)` | 夜盘缺口指数衰减（21:00~21:30） |
+| `gap_decay` | `gap × exp(-秒数/300)` | 夜盘缺口衰减 |
+| `oi_change` / `oi_change_pct` | — | 仓差和仓差变化率 |
+| `oi_ma_*` / `oi_change_ma_*` | — | 持仓量和仓差移动平均 |
+| `vol_oi_ratio` | `volume / open_interest` | 量仓比 |
 
-### 10. 高级波动率类（4个特征）— 新增
+#### Level 5: 跨周期与高级组合特征（6个）— 市场状态
 
-| 特征名 | 计算公式 | 说明 |
-|--------|----------|------|
-| `volatility_regime` | 收益率的20周期滚动标准差 | 波动率状态 |
-| `vol_ratio` | `ATR14 / ATR14的20周期均值` | ATR相对水平 |
-| `atr_pct` | `ATR14 / 当前价格` | ATR百分比化 |
-| `range_pct` | `(high - low) / close` | 振幅百分比 |
+| 特征名 | 说明 |
+|--------|------|
+| `regime_volatility` | 滚动波动率 |
+| `volatility_rank` / `volatility_change` | 波动率排名和变化率 |
+| `market_regime` | 市场状态编码（0~3） |
+| `volatility_regime` | 收益率的20周期滚动标准差 |
+| `vol_ratio` | ATR14 / ATR14的20周期均值 |
 
 ### 各周期窗口参数差异
 
@@ -401,8 +391,13 @@ python ml_pipeline.py --period 5min --target future_direction --n-rows 2000
 推荐ML框架: xgboost
 ============================================================
 
-# 步骤1: 数据准备
-特征数量: 81, 样本数量: 1901      ← 含12个新增增强特征
+# 步骤1: 数据准备（分层特征结构）
+特征数量: 81, 样本数量: 1901
+  level1_price (基础价格特征 — OHLCV直接衍生): 13个特征
+  level2_trend (趋势特征 — 均线与布林带): 16个特征
+  level3_momentum (动量与波动率特征 — 技术指标振荡器): 30个特征
+  level4_micro (微观结构特征 — 资金流向与持仓分析): 16个特征
+  level5_cross (跨周期与高级组合特征 — 市场状态与波动率状态): 6个特征
 
 # 步骤2: 模型训练（集成模型）
 使用 LightGBM+XGBoost 集成模型...

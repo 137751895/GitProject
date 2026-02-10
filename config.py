@@ -115,6 +115,67 @@ REGIME_LABELS = {
     4: "strong_up",
 }
 
+# 分层特征结构 (Feature Hierarchy)
+# 将所有特征按层级组织，从基础价格到高阶跨周期特征
+# Level 1: 基础价格特征 — 原始OHLCV衍生
+# Level 2: 趋势特征 — 移动平均、趋势方向
+# Level 3: 动量与波动率特征 — 技术指标振荡器
+# Level 4: 微观结构特征 — 资金流向、订单不平衡
+# Level 5: 跨周期/高级特征 — 市场状态、跨层级组合
+FEATURE_HIERARCHY = {
+    "level1_price": {
+        "description": "基础价格特征 — OHLCV直接衍生",
+        "features": [
+            "close_pos", "body_ratio", "upper_shadow_ratio",
+            "lower_shadow_ratio", "candle_direction", "amplitude",
+            "gap", "gap_ratio", "price_position", "dist_to_high",
+            "dist_to_low", "log_return", "range_pct",
+        ],
+    },
+    "level2_trend": {
+        "description": "趋势特征 — 均线与布林带",
+        "features": [
+            "ma_5", "ma_10", "ma_20", "ma_60",
+            "ema_5", "ema_10", "ema_20", "ema_60",
+            "boll_upper", "boll_mid", "boll_lower",
+            "boll_width", "boll_pct_b",
+            "trend_strength", "trend_direction", "trend_acceleration",
+        ],
+    },
+    "level3_momentum": {
+        "description": "动量与波动率特征 — 技术指标振荡器",
+        "features": [
+            "rsi_14", "rsi_6", "macd_dif", "macd_dea", "macd_hist",
+            "kdj_k", "kdj_d", "kdj_j", "cci", "williams_r",
+            "roc_12", "roc_6", "obv", "vwap",
+            "tr", "atr", "atr_pct",
+            "volatility_5", "volatility_10", "volatility_20",
+            "return_ma_5", "return_ma_10", "return_ma_20",
+            "vol_ma_5", "vol_ma_10", "vol_ma_20",
+            "vol_ratio_5", "vol_ratio_10", "vol_ratio_20",
+            "vol_change",
+        ],
+    },
+    "level4_micro": {
+        "description": "微观结构特征 — 资金流向与持仓分析",
+        "features": [
+            "divergence", "vwap_dev", "vol_state", "mom_slope",
+            "rsi_slope", "vol_zscore", "gap_decay",
+            "oi_change", "oi_change_pct",
+            "oi_ma_5", "oi_ma_10", "oi_ma_20",
+            "oi_change_ma_5", "oi_change_ma_10", "oi_change_ma_20",
+            "vol_oi_ratio",
+        ],
+    },
+    "level5_cross": {
+        "description": "跨周期与高级组合特征 — 市场状态与波动率状态",
+        "features": [
+            "regime_volatility", "volatility_rank", "volatility_change",
+            "market_regime", "volatility_regime", "vol_ratio",
+        ],
+    },
+}
+
 # 增强特征配置
 ENHANCED_FEATURE_CONFIG = {
     # 微观结构特征

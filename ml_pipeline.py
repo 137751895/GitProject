@@ -19,7 +19,7 @@ import logging
 import numpy as np
 import pandas as pd
 
-from features.feature_engineering import compute_all_features, compute_prediction_targets
+from features.feature_engineering import compute_all_features, compute_prediction_targets, get_feature_hierarchy
 from models.ml_models import create_model, LightGBMModel, XGBoostModel
 from models.ensemble_model import EnsembleModel
 from models.position_sizing import RiskBudgetManager
@@ -121,6 +121,13 @@ def prepare_data(df, period="5min", target_name="future_direction", horizon=None
     X = X.ffill().fillna(0)
 
     logger.info(f"特征数量: {X.shape[1]}, 样本数量: {X.shape[0]}")
+
+    # 显示分层特征结构
+    hierarchy = get_feature_hierarchy(X)
+    for level, info in hierarchy.items():
+        n = len(info["features"])
+        logger.info(f"  {level} ({info['description']}): {n}个特征")
+
     return X, y
 
 
