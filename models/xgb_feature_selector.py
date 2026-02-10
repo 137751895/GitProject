@@ -178,8 +178,9 @@ class XGBFeatureSelector:
                               step=5):
         """动态确定最佳特征数量。
 
-        在不同特征数量下使用TimeSeriesSplit评估，选择准确率达到
-        最大值95%时所需的最少特征数量。
+        在不同特征数量下使用TimeSeriesSplit评估，选择达到最佳准确率
+        95%水平时所需的最少特征数量（即在精度几乎不损失的前提下
+        使用尽可能少的特征）。
 
         Parameters
         ----------
@@ -199,8 +200,7 @@ class XGBFeatureSelector:
         dict
             包含 optimal_n_features, search_results
         """
-        from sklearn.ensemble import RandomForestClassifier
-        from sklearn.model_selection import cross_val_score
+        import xgboost as xgb
 
         if self.feature_importance_df is None:
             self.fit_select(X, y)
@@ -213,13 +213,16 @@ class XGBFeatureSelector:
             top_n_features = ranked_features[:n]
             X_subset = X[top_n_features]
 
-            model = RandomForestClassifier(
-                n_estimators=50, random_state=42, n_jobs=-1,
+            model = xgb.XGBClassifier(
+                n_estimators=50, random_state=42, n_jobs=-1, verbosity=0,
+                eval_metric="logloss",
             )
             tscv = TimeSeriesSplit(n_splits=3)
-            scores = cross_val_score(
-                model, X_subset, y, cv=tscv, scoring="accuracy",
-            )
+            scores = []
+            for train_idx, test_idx in tscv.split(X_subset):
+                model.fit(X_subset.iloc[train_idx], y.iloc[train_idx])
+                score = model.score(X_subset.iloc[test_idx], y.iloc[test_idx])
+                scores.append(score)
 
             search_results.append({
                 "n_features": n,
@@ -229,7 +232,7 @@ class XGBFeatureSelector:
 
         results_df = pd.DataFrame(search_results)
 
-        # 选择准确率达到最大值95%时所需的最少特征数量
+        # 选择达到最佳准确率95%水平时所需的最少特征数量
         max_acc = results_df["accuracy"].max()
         threshold_acc = max_acc * 0.95
         optimal_rows = results_df[results_df["accuracy"] >= threshold_acc]

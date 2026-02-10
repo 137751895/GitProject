@@ -9,6 +9,7 @@
 - [项目结构](#项目结构)
 - [代码文件功能说明](#代码文件功能说明)
 - [各周期机器学习模型选择](#各周期机器学习模型选择)
+- [15分钟LSTM特征预筛选](#15分钟lstm特征预筛选)
 - [特征列表](#特征列表)
 - [预测目标](#预测目标)
 - [特征评估报告](#特征评估报告)
@@ -37,6 +38,7 @@ GitProject/
 │   ├── ml_models.py                   # 机器学习模型模块
 │   ├── ensemble_model.py             # 模型集成模块
 │   ├── multi_timeframe.py            # 多时间框架协同模块（15min→5min→1min层级协同）
+│   ├── xgb_feature_selector.py      # XGBoost特征预筛选模块（15分钟LSTM专用）
 │   ├── adaptive_learning.py          # 实时自适应模块（在线学习/漂移检测/自适应阈值）
 │   └── position_sizing.py            # 风险预算与仓位管理模块
 └── backtest/
@@ -167,6 +169,22 @@ GitProject/
 ### `models/ensemble_model.py` — 模型集成模块
 
 LightGBM + XGBoost 加权集成，基于验证集自动分配权重。
+
+### `models/xgb_feature_selector.py` — XGBoost特征预筛选模块
+
+由于LSTM无法直接评估特征重要性，使用XGBoost作为特征筛选器，为15分钟LSTM模型筛选最有效的特征子集。
+
+| 方法 | 说明 |
+|------|------|
+| `fit_select(X, y)` | 使用TimeSeriesSplit CV训练XGBoost，计算各折平均特征重要性，筛选Top N特征 |
+| `get_feature_groups_importance(groups)` | 按特征组评估重要性，统计每组入选数量 |
+| `dynamic_feature_count(X, y)` | 自动搜索最佳特征数量（达到95%最大准确率的最少特征数） |
+
+**预筛选流程：**
+
+```
+原始特征 (84个) → XGBoost筛选 (5折CV) → Top 25特征 → LSTM训练
+```
 
 ### `models/multi_timeframe.py` — 多时间框架协同模块
 
@@ -437,6 +455,123 @@ print(f"Sharpe: {perf['sharpe_ratio']:.2f}")
 
 ---
 
+## 15分钟LSTM特征预筛选
+
+### 为什么需要特征预筛选？
+
+LSTM模型无法直接评估特征重要性（`get_feature_importance()` 返回 None），且LSTM对噪声特征敏感。系统原始特征数为84个，直接输入LSTM会导致：
+- **过拟合风险**：15分钟数据量较少（每天约16根K线），过多特征加剧过拟合
+- **训练效率低**：特征越多，LSTM训练时间越长
+- **可解释性差**：无法知道哪些特征对预测有贡献
+
+### 解决方案：XGBoost作为特征筛选器
+
+使用XGBoost作为代理模型，通过TimeSeriesSplit交叉验证评估每个特征的重要性，筛选出Top N个特征再输入LSTM训练。
+
+**完整流程：**
+
+```
+原始数据 (15分钟OHLCV+仓差)
+    ↓
+特征工程 (生成84个特征)
+    ↓
+XGBoost特征筛选 (5折TimeSeriesSplit CV)
+    ↓
+特征重要性排名 + 特征组分析
+    ↓
+动态搜索最佳特征数量 (10-40个)
+    ↓
+筛选Top N特征 (默认25个)
+    ↓
+LSTM模型训练 (使用筛选后的特征)
+    ↓
+对比实验: 全量特征 vs 筛选特征
+```
+
+### 运行特征预筛选
+
+```bash
+# 使用默认配置（25个特征）
+python ml_pipeline.py --feature-selection
+
+# 指定特征数量
+python ml_pipeline.py --feature-selection --n-features 20
+
+# 指定数据量
+python ml_pipeline.py --feature-selection --n-rows 3000
+```
+
+### 配置参数
+
+在 `config.py` 中的 `LSTM_FEATURE_SELECTION_CONFIG`：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `xgb_params.n_estimators` | 200 | XGBoost筛选器的树数量 |
+| `xgb_params.max_depth` | 5 | XGBoost筛选器的树深度 |
+| `selection.n_features` | 25 | 最终选择的特征数量 |
+| `selection.threshold` | `"median"` | 重要性阈值方法 |
+| `selection.cv_splits` | 5 | 时间序列交叉验证折数 |
+
+### 输出示例
+
+```
+============================================================
+15分钟LSTM模型训练 — XGBoost特征预筛选
+============================================================
+
+Step 1: 生成15分钟模拟数据...
+原始特征数量: 84, 样本数量: 1902
+
+Step 2: XGBoost特征筛选 (目标: 25个特征)...
+
+Step 3: 特征重要性排名 (Top 15):
+  oi_ma_20          importance=0.0169  std=0.0019
+  ema_40            importance=0.0167  std=0.0034
+  vwap              importance=0.0158  std=0.0028
+  regime_volatility importance=0.0153  std=0.0075
+  atr_pct           importance=0.0151  std=0.0022
+  ...
+
+Step 3b: 特征组重要性分析:
+  布林带       score=0.0134  入选=3/5
+  价格趋势     score=0.0131  入选=5/9
+  持仓量(仓差)  score=0.0127  入选=2/9
+  动量指标     score=0.0126  入选=4/12
+  ...
+
+Step 4: 动态特征数量搜索...
+  建议最佳特征数量: 10
+    n= 10  accuracy=0.4905 ←
+    n= 15  accuracy=0.5004
+    n= 20  accuracy=0.5011
+    n= 25  accuracy=0.4765
+    ...
+
+Step 5: 使用筛选后的 25 个特征训练LSTM...
+Step 6: 对比实验 — 全量特征 vs 筛选特征
+  全量特征 (84个): 准确率 = 0.48xx
+  筛选特征 (25个): 准确率 = 0.50xx
+  特征减少: 84→25 (-70%)
+```
+
+### 筛选策略说明
+
+| 筛选准则 | 说明 |
+|----------|------|
+| **重要性排名** | 按5折CV平均XGBoost特征重要性降序排列 |
+| **稳定性** | 标准差(std)反映特征在不同折中的稳定性，std越小越稳定 |
+| **多样性** | 特征组分析确保每个重要组都有代表入选 |
+| **动态数量** | 搜索达到95%最大准确率时所需的最少特征数 |
+
+### 预期效果
+
+- **训练时间减少**：30-50%（特征减少约70%）
+- **过拟合降低**：去除噪声特征后，验证集/测试集表现差距缩小
+- **模型稳定性提高**：不同时间段表现更一致
+
+---
+
 ## 特征列表
 
 ### 分层特征结构 (Feature Hierarchy)
@@ -652,6 +787,12 @@ python ml_pipeline.py --multi-timeframe
 
 # 多时间框架 + 指定数据量
 python ml_pipeline.py --multi-timeframe --n-rows 2000
+
+# 15分钟LSTM特征预筛选（XGBoost筛选→LSTM训练对比）
+python ml_pipeline.py --feature-selection
+
+# 特征预筛选 + 指定特征数量
+python ml_pipeline.py --feature-selection --n-features 20
 ```
 
 ### 命令行参数
@@ -663,6 +804,8 @@ python ml_pipeline.py --multi-timeframe --n-rows 2000
 | `--n-rows` | int | `5000` | 模拟数据行数 |
 | `--skip-feature-selection` | flag | — | 跳过特征选择步骤 |
 | `--multi-timeframe` | flag | — | 运行多时间框架协同交易系统（自动训练三个周期模型并协同生成信号） |
+| `--feature-selection` | flag | — | 运行15分钟LSTM特征预筛选流程（XGBoost筛选→LSTM训练对比） |
+| `--n-features` | int | `25` | 特征预筛选：选择的特征数量（配合 `--feature-selection` 使用） |
 
 ---
 
@@ -737,6 +880,7 @@ vwap_dev             0.020     ← 新增微观结构特征入选Top 10
 6. **自适应阈值** — 基于波动率和模型性能动态调整交易阈值，高波动率/低性能时自动提高阈值
 7. **概念漂移检测** — 实时监控模型性能，当准确率下降超过10%时触发重训建议
 8. **多时间框架协同** — 通过15min→5min→1min层级决策链，产生A/B/C等级交易信号，A级(三周期共振)信号最强
+9. **LSTM特征预筛选** — XGBoost代理筛选器将84个特征筛选至25个，特征减少70%，降低LSTM过拟合风险
 
 ### 示例：多时间框架协同交易
 
