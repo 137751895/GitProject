@@ -28,11 +28,13 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 def get_classification_metrics(y_true, y_pred):
     """计算分类指标"""
+    n_classes = len(np.unique(np.concatenate([np.unique(y_true), np.unique(y_pred)])))
+    average = "binary" if n_classes <= 2 else "weighted"
     return {
         "accuracy": accuracy_score(y_true, y_pred),
-        "precision": precision_score(y_true, y_pred, zero_division=0),
-        "recall": recall_score(y_true, y_pred, zero_division=0),
-        "f1_score": f1_score(y_true, y_pred, zero_division=0),
+        "precision": precision_score(y_true, y_pred, zero_division=0, average=average),
+        "recall": recall_score(y_true, y_pred, zero_division=0, average=average),
+        "f1_score": f1_score(y_true, y_pred, zero_division=0, average=average),
     }
 
 
@@ -156,9 +158,15 @@ class XGBoostModel:
         self.feature_names = list(X_train.columns) if hasattr(X_train, "columns") else None
 
         if self.task == "classification":
-            self.model = xgb.XGBClassifier(
-                eval_metric="logloss", use_label_encoder=False, **self.params
-            )
+            n_classes = len(np.unique(y_train))
+            if n_classes > 2:
+                self.model = xgb.XGBClassifier(
+                    eval_metric="mlogloss", **self.params
+                )
+            else:
+                self.model = xgb.XGBClassifier(
+                    eval_metric="logloss", use_label_encoder=False, **self.params
+                )
         else:
             self.model = xgb.XGBRegressor(**self.params)
 

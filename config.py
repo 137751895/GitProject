@@ -30,6 +30,10 @@ PREDICTION_TARGETS = {
         "description": "未来价格方向 (1=涨, 0=跌)",
         "horizon": {"1min": 5, "5min": 3, "15min": 2},
     },
+    "future_regime": {
+        "description": "未来价格五分位状态 (0=强跌, 1=弱跌, 2=中性, 3=弱涨, 4=强涨)",
+        "horizon": {"1min": 5, "5min": 3, "15min": 2},
+    },
 }
 
 # 默认预测目标
@@ -76,4 +80,35 @@ XGB_CONFIG = {
     "colsample_bytree": 0.8,
     "reg_alpha": 0.1,
     "reg_lambda": 0.1,
+}
+
+# 市场状态识别配置
+REGIME_CONFIG = {
+    "vol_window": 20,
+    "trend_window": 20,
+    "vol_quantile_high": 0.7,
+    "vol_quantile_low": 0.3,
+    "trend_threshold": 0.3,
+}
+
+# 集成模型配置
+ENSEMBLE_CONFIG = {
+    "enabled": True,
+    "models": ["lightgbm", "xgboost"],
+}
+
+# 仓位管理配置
+POSITION_CONFIG = {
+    "account_risk": 0.02,
+    "max_position": 1.0,
+    "base_threshold": 0.55,
+}
+
+# 预测目标: future_regime 的分类标签
+REGIME_LABELS = {
+    0: "strong_down",
+    1: "weak_down",
+    2: "neutral",
+    3: "weak_up",
+    4: "strong_up",
 }

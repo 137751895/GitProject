@@ -21,8 +21,10 @@ import pandas as pd
 
 from features.feature_engineering import compute_all_features, compute_prediction_targets
 from models.ml_models import create_model, LightGBMModel, XGBoostModel
+from models.ensemble_model import EnsembleModel
+from models.position_sizing import RiskBudgetManager
 from backtest.feature_selector import FeatureSelector, get_recommended_feature_groups
-from config import ML_FRAMEWORKS, PREDICTION_TARGETS, BACKTEST_CONFIG
+from config import ML_FRAMEWORKS, PREDICTION_TARGETS, BACKTEST_CONFIG, ENSEMBLE_CONFIG
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -154,7 +156,12 @@ def train_and_evaluate(X, y, period="5min", task="classification"):
     X_test, y_test = X.iloc[val_end:], y.iloc[val_end:]
 
     logger.info(f"创建 {period} 周期模型 (推荐框架: {ML_FRAMEWORKS[period]})...")
-    model = create_model(period, task=task)
+    use_ensemble = ENSEMBLE_CONFIG.get("enabled", False) and period != "15min"
+    if use_ensemble:
+        logger.info("使用 LightGBM+XGBoost 集成模型...")
+        model = EnsembleModel(task=task)
+    else:
+        model = create_model(period, task=task)
 
     logger.info("训练模型...")
     model.train(X_train, y_train, X_val, y_val)
@@ -170,6 +177,22 @@ def train_and_evaluate(X, y, period="5min", task="classification"):
     importance = model.get_feature_importance()
     if importance is not None:
         logger.info(f"Top 10 重要特征:\n{importance.head(10)}")
+
+    # 集成模型权重
+    if use_ensemble:
+        logger.info(f"集成模型权重: {model.get_model_weights()}")
+
+    # 仓位管理建议
+    if task == "classification" and hasattr(model, 'predict_proba'):
+        try:
+            probas = model.predict_proba(X_test)[:, 1]
+            test_volatility = X_test["atr"].values if "atr" in X_test.columns else np.ones(len(X_test)) * 0.01
+            risk_mgr = RiskBudgetManager()
+            signals = risk_mgr.compute_signals(probas, test_volatility)
+            n_trades = np.sum(signals["signal"] != 0)
+            logger.info(f"仓位管理: 测试集产生 {n_trades} 个交易信号")
+        except Exception:
+            pass
 
     return model, {"train": train_metrics, "test": test_metrics}
 
@@ -243,7 +266,7 @@ def main():
                         choices=["1min", "5min", "15min"],
                         help="K线周期 (default: 5min)")
     parser.add_argument("--target", type=str, default="future_direction",
-                        choices=["future_return", "future_direction"],
+                        choices=["future_return", "future_direction", "future_regime"],
                         help="预测目标 (default: future_direction)")
     parser.add_argument("--n-rows", type=int, default=5000,
                         help="模拟数据行数 (default: 5000)")
@@ -251,7 +274,7 @@ def main():
                         help="跳过特征选择步骤")
     args = parser.parse_args()
 
-    task = "classification" if args.target == "future_direction" else "regression"
+    task = "classification" if args.target in ("future_direction", "future_regime") else "regression"
 
     logger.info("=" * 60)
     logger.info("商品期货机器学习量化模型")

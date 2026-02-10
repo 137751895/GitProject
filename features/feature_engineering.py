@@ -305,6 +305,12 @@ def compute_all_features(df, period="5min"):
     # K线形态特征
     features = pd.concat([features, compute_candle_features(o, h, low, c)], axis=1)
 
+    # 市场状态特征
+    from features.market_regime import MarketRegimeDetector
+    detector = MarketRegimeDetector()
+    regime_features = detector.detect_regime(df)
+    features = pd.concat([features, regime_features], axis=1)
+
     return features
 
 
@@ -341,5 +347,12 @@ def compute_prediction_targets(df, horizon=5):
     # 未来波动率
     returns = close.pct_change()
     targets["future_volatility"] = returns.shift(-1).rolling(window=horizon).std()
+
+    # 多分类预测目标（五分位）
+    bins = [-np.inf, -0.005, -0.001, 0.001, 0.005, np.inf]
+    labels = [0, 1, 2, 3, 4]  # strong_down, weak_down, neutral, weak_up, strong_up
+    targets["future_regime"] = pd.cut(
+        targets["future_return"], bins=bins, labels=labels
+    ).astype(float)
 
     return targets

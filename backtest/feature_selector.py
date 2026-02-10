@@ -277,6 +277,147 @@ class FeatureSelector:
         self.results["feature_subsets"] = results_df
         return results_df
 
+    def stability_selection(self, X, y, n_bootstrap=20, sample_fraction=0.7,
+                            threshold=0.6):
+        """
+        稳定性特征选择 (Stability Selection)。
+
+        多次随机采样训练LassoCV，统计每个特征被选中的频率，
+        频率高于阈值的特征被认为是稳定且重要的特征。
+
+        Parameters
+        ----------
+        X : pd.DataFrame
+            特征矩阵
+        y : pd.Series
+            目标变量
+        n_bootstrap : int
+            采样次数
+        sample_fraction : float
+            每次采样比例
+        threshold : float
+            特征选择频率阈值
+
+        Returns
+        -------
+        pd.DataFrame
+            特征稳定性得分
+        """
+        from sklearn.linear_model import LassoCV
+        from sklearn.preprocessing import StandardScaler
+
+        scaler = StandardScaler()
+        X_scaled = pd.DataFrame(
+            scaler.fit_transform(X), columns=X.columns, index=X.index
+        )
+
+        selection_counts = pd.Series(0, index=X.columns, dtype=float)
+        n_samples = len(X_scaled)
+        sample_size = int(n_samples * sample_fraction)
+
+        for i in range(n_bootstrap):
+            # 随机采样（保持时间顺序的采样）
+            rng = np.random.RandomState(i)
+            indices = rng.choice(n_samples, size=sample_size, replace=False)
+            indices.sort()
+
+            X_sample = X_scaled.iloc[indices]
+            y_sample = y.iloc[indices]
+
+            lasso = LassoCV(cv=3, random_state=i, max_iter=2000)
+            lasso.fit(X_sample, y_sample)
+
+            selected = np.abs(lasso.coef_) > 0
+            selection_counts[selected] += 1
+
+        stability_scores = selection_counts / n_bootstrap
+        result = pd.DataFrame({
+            "feature": X.columns,
+            "stability_score": stability_scores.values,
+            "selected": stability_scores.values >= threshold,
+        }).sort_values("stability_score", ascending=False)
+
+        self.results["stability_selection"] = result
+        return result
+
+    def recursive_feature_elimination(self, model_class, X, y,
+                                       min_features=10, step=5,
+                                       task="classification",
+                                       model_params=None):
+        """
+        递归特征消除 (RFE) 与交叉验证结合。
+
+        逐步移除最不重要的特征，在每一步使用时间序列CV评估，
+        找到最佳特征数量。
+
+        Parameters
+        ----------
+        model_class : class
+            模型类
+        X : pd.DataFrame
+            特征矩阵
+        y : pd.Series
+            目标变量
+        min_features : int
+            最少保留的特征数
+        step : int
+            每步移除的特征数
+        task : str
+            任务类型
+        model_params : dict, optional
+            模型参数
+
+        Returns
+        -------
+        dict
+            RFE结果，包含最佳特征集和各步评估
+        """
+        current_features = list(X.columns)
+        rfe_history = []
+        best_score = -np.inf
+        best_features = current_features.copy()
+
+        while len(current_features) >= min_features:
+            X_subset = X[current_features]
+            cv_result = self.time_series_cv_evaluate(
+                model_class, X_subset, y, task=task, model_params=model_params
+            )
+
+            if task == "classification":
+                score = cv_result["mean_success_rate"]
+            else:
+                score = cv_result.get("mean_r2", 0)
+
+            rfe_history.append({
+                "n_features": len(current_features),
+                "score": score,
+            })
+
+            if score > best_score:
+                best_score = score
+                best_features = current_features.copy()
+
+            # 获取特征重要性并移除最不重要的
+            model = model_class(task=task, params=model_params)
+            model.train(X_subset, y)
+            importance = model.get_feature_importance()
+            if importance is None:
+                break
+
+            # 移除importance最低的step个特征
+            features_to_remove = list(importance.tail(step).index)
+            current_features = [f for f in current_features
+                                if f not in features_to_remove]
+
+        result = {
+            "best_features": best_features,
+            "best_score": best_score,
+            "n_best_features": len(best_features),
+            "rfe_history": pd.DataFrame(rfe_history),
+        }
+        self.results["rfe"] = result
+        return result
+
     def select_best_features(self, model_class, X, y, task="classification", model_params=None, top_n=20):
         """
         综合多种方法挑选最佳特征。
@@ -396,5 +537,10 @@ def get_recommended_feature_groups():
         "K线形态": [
             "body_ratio", "upper_shadow_ratio", "lower_shadow_ratio",
             "candle_direction", "amplitude", "gap", "gap_ratio",
+        ],
+        "市场状态": [
+            "regime_volatility", "trend_strength", "volatility_rank",
+            "market_regime", "trend_direction", "volatility_change",
+            "trend_acceleration",
         ],
     }
