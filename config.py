@@ -200,6 +200,14 @@ FEATURE_HIERARCHY = {
     },
 }
 
+# 多时间框架协同配置
+MULTI_TIMEFRAME_CONFIG = {
+    "neutral_zone": 0.10,            # 15分钟中性区间宽度（概率在0.4~0.6之间判定为中性）
+    "entry_threshold": 0.60,         # 5分钟入场阈值（概率>0.6才触发入场）
+    "optimization_threshold": 0.55,  # 1分钟入场优化阈值（概率>0.55认为是好入场点）
+    "min_grade": "C",                # 最低信号质量等级（A/B/C，低于此等级过滤）
+}
+
 # 增强特征配置
 ENHANCED_FEATURE_CONFIG = {
     # 微观结构特征

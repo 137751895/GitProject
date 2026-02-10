@@ -26,7 +26,8 @@ from models.position_sizing import RiskBudgetManager, compute_performance_metric
 from models.adaptive_learning import AdaptiveModelManager
 from backtest.feature_selector import FeatureSelector, get_recommended_feature_groups
 from config import (ML_FRAMEWORKS, PREDICTION_TARGETS, BACKTEST_CONFIG,
-                    ENSEMBLE_CONFIG, POSITION_CONFIG, ADAPTIVE_CONFIG)
+                    ENSEMBLE_CONFIG, POSITION_CONFIG, ADAPTIVE_CONFIG,
+                    MULTI_TIMEFRAME_CONFIG)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -319,6 +320,108 @@ def run_feature_selection(X, y, period="5min", task="classification"):
     }
 
 
+def run_multi_timeframe(n_rows=5000, target="future_direction"):
+    """
+    运行多时间框架协同交易演示。
+
+    训练15分钟、5分钟、1分钟三个周期的模型，
+    然后通过 MultiTimeframeCoordinator 协同生成交易信号。
+
+    Parameters
+    ----------
+    n_rows : int
+        模拟数据行数
+    target : str
+        预测目标名称
+    """
+    from models.multi_timeframe import MultiTimeframeCoordinator
+
+    logger.info("=" * 60)
+    logger.info("多时间框架协同交易系统")
+    logger.info("=" * 60)
+
+    task = "classification" if target in ("future_direction", "future_regime") else "regression"
+
+    # Step 1: 生成三个周期的数据
+    logger.info("生成三个周期的模拟数据...")
+    df_15m = generate_sample_data(n_rows=n_rows, period="15min")
+    df_5m = generate_sample_data(n_rows=n_rows * 3, period="5min")
+    df_1m = generate_sample_data(n_rows=n_rows * 15, period="1min")
+
+    # Step 2: 各周期独立训练
+    logger.info("训练15分钟模型（趋势方向）...")
+    X_15m, y_15m = prepare_data(df_15m, period="15min", target_name=target)
+    # 多时间框架模式使用XGBoost作为15分钟模型，因为协同系统需要predict_proba
+    # 且XGBoost无需TensorFlow依赖，适合轻量级部署
+    model_15m = XGBoostModel(task=task)
+    train_ratio = BACKTEST_CONFIG["train_ratio"]
+    val_ratio = BACKTEST_CONFIG["validation_ratio"]
+    n_15 = len(X_15m)
+    tr_end_15 = int(n_15 * train_ratio)
+    val_end_15 = int(n_15 * (train_ratio + val_ratio))
+    model_15m.train(X_15m.iloc[:tr_end_15], y_15m.iloc[:tr_end_15],
+                    X_15m.iloc[tr_end_15:val_end_15], y_15m.iloc[tr_end_15:val_end_15])
+    metrics_15m = model_15m.evaluate(X_15m.iloc[val_end_15:], y_15m.iloc[val_end_15:])
+    logger.info(f"  15分钟模型测试集: {metrics_15m}")
+
+    logger.info("训练5分钟模型（入场时机）...")
+    X_5m, y_5m = prepare_data(df_5m, period="5min", target_name=target)
+    model_5m, _ = train_and_evaluate(X_5m, y_5m, period="5min", task=task)
+
+    logger.info("训练1分钟模型（入场价格）...")
+    X_1m, y_1m = prepare_data(df_1m, period="1min", target_name=target)
+    model_1m, _ = train_and_evaluate(X_1m, y_1m, period="1min", task=task)
+
+    # Step 3: 创建协同系统
+    logger.info("=" * 60)
+    logger.info("创建多时间框架协同系统...")
+    mtf_config = MULTI_TIMEFRAME_CONFIG
+    coordinator = MultiTimeframeCoordinator(
+        neutral_zone=mtf_config.get("neutral_zone", 0.10),
+        entry_threshold=mtf_config.get("entry_threshold", 0.60),
+        optimization_threshold=mtf_config.get("optimization_threshold", 0.55),
+        min_grade=mtf_config.get("min_grade", "C"),
+    )
+    coordinator.set_models(
+        model_15min=model_15m,
+        model_5min=model_5m,
+        model_1min=model_1m,
+    )
+
+    # Step 4: 使用测试集数据生成协同信号
+    # 取各周期测试集的尾部数据（对齐最小长度）
+    test_start = int(len(X_15m) * 0.85)
+    X_15m_test = X_15m.iloc[test_start:]
+    test_start_5m = int(len(X_5m) * 0.85)
+    X_5m_test = X_5m.iloc[test_start_5m:]
+    test_start_1m = int(len(X_1m) * 0.85)
+    X_1m_test = X_1m.iloc[test_start_1m:]
+
+    # 对齐到最小长度
+    min_len = min(len(X_15m_test), len(X_5m_test), len(X_1m_test))
+    X_15m_test = X_15m_test.iloc[:min_len]
+    X_5m_test = X_5m_test.iloc[:min_len]
+    X_1m_test = X_1m_test.iloc[:min_len]
+
+    logger.info(f"协同信号生成: {min_len} 个样本")
+    result = coordinator.generate_signals(X_15m_test, X_5m_test, X_1m_test)
+
+    # Step 5: 输出协同信号统计
+    summary = coordinator.get_signal_summary()
+    logger.info("=" * 60)
+    logger.info("多时间框架协同信号统计:")
+    logger.info(f"  总样本数: {summary['n_total']}")
+    logger.info(f"  做多信号: {summary['n_long']}")
+    logger.info(f"  做空信号: {summary['n_short']}")
+    logger.info(f"  中性(无信号): {summary['n_neutral']}")
+    logger.info(f"  A级信号(三周期共振): {summary.get('grade_A', 0)}")
+    logger.info(f"  B级信号(双周期确认): {summary.get('grade_B', 0)}")
+    logger.info(f"  平均信号强度: {summary['avg_signal_strength']:.3f}")
+    logger.info(f"  平均一致性评分: {summary['avg_agreement']:.3f}")
+    logger.info("=" * 60)
+    logger.info("多时间框架协同交易系统完成!")
+
+
 def main():
     """主流程入口"""
     parser = argparse.ArgumentParser(description="商品期货机器学习量化模型")
@@ -332,7 +435,14 @@ def main():
                         help="模拟数据行数 (default: 5000)")
     parser.add_argument("--skip-feature-selection", action="store_true",
                         help="跳过特征选择步骤")
+    parser.add_argument("--multi-timeframe", action="store_true",
+                        help="运行多时间框架协同交易系统")
     args = parser.parse_args()
+
+    # 多时间框架协同模式
+    if args.multi_timeframe:
+        run_multi_timeframe(n_rows=args.n_rows, target=args.target)
+        return
 
     task = "classification" if args.target in ("future_direction", "future_regime") else "regression"
 
