@@ -311,6 +311,20 @@ def compute_all_features(df, period="5min"):
     regime_features = detector.detect_regime(df)
     features = pd.concat([features, regime_features], axis=1)
 
+    # 微观结构特征
+    from features.feature_engineering_enhanced import (
+        compute_microstructure_features,
+        compute_advanced_volatility_features,
+        compute_gap_decay_features,
+    )
+    features = pd.concat([features, compute_microstructure_features(df)], axis=1)
+
+    # 高级波动率特征
+    features = pd.concat([features, compute_advanced_volatility_features(df)], axis=1)
+
+    # 缺口衰减特征
+    features = pd.concat([features, compute_gap_decay_features(df)], axis=1)
+
     return features
 
 
