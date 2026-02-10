@@ -22,9 +22,11 @@ import pandas as pd
 from features.feature_engineering import compute_all_features, compute_prediction_targets, get_feature_hierarchy
 from models.ml_models import create_model, LightGBMModel, XGBoostModel
 from models.ensemble_model import EnsembleModel
-from models.position_sizing import RiskBudgetManager
+from models.position_sizing import RiskBudgetManager, compute_performance_metrics
+from models.adaptive_learning import AdaptiveModelManager
 from backtest.feature_selector import FeatureSelector, get_recommended_feature_groups
-from config import ML_FRAMEWORKS, PREDICTION_TARGETS, BACKTEST_CONFIG, ENSEMBLE_CONFIG
+from config import (ML_FRAMEWORKS, PREDICTION_TARGETS, BACKTEST_CONFIG,
+                    ENSEMBLE_CONFIG, POSITION_CONFIG, ADAPTIVE_CONFIG)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -190,15 +192,64 @@ def train_and_evaluate(X, y, period="5min", task="classification"):
     if use_ensemble:
         logger.info(f"集成模型权重: {model.get_model_weights()}")
 
-    # 仓位管理建议
+    # 仓位管理建议（增强版）
     if task == "classification" and hasattr(model, 'predict_proba'):
         try:
             probas = model.predict_proba(X_test)[:, 1]
             test_volatility = X_test["atr"].values if "atr" in X_test.columns else np.ones(len(X_test)) * 0.01
-            risk_mgr = RiskBudgetManager()
+            risk_mgr = RiskBudgetManager(
+                account_risk=POSITION_CONFIG.get("account_risk", 0.02),
+                max_position=POSITION_CONFIG.get("max_position", 1.0),
+                base_threshold=POSITION_CONFIG.get("base_threshold", 0.55),
+                max_drawdown=POSITION_CONFIG.get("max_drawdown", 0.15),
+                drawdown_warning=POSITION_CONFIG.get("drawdown_warning", 0.08),
+                max_daily_loss=POSITION_CONFIG.get("max_daily_loss", 0.03),
+                max_daily_trades=POSITION_CONFIG.get("max_daily_trades", 20),
+            )
             signals = risk_mgr.compute_signals(probas, test_volatility)
             n_trades = np.sum(signals["signal"] != 0)
             logger.info(f"仓位管理: 测试集产生 {n_trades} 个交易信号")
+            logger.info(f"  回撤保护乘数: {signals['drawdown_multiplier']:.2f}")
+
+            # 模拟交易绩效
+            trade_mask = signals["signal"] != 0
+            if np.sum(trade_mask) > 0:
+                actual_returns = (y_test.values[trade_mask] * 2 - 1) * 0.001
+                perf = compute_performance_metrics(actual_returns)
+                logger.info(f"  模拟绩效: 胜率={perf['win_rate']:.2%}, "
+                            f"盈亏比={perf['profit_factor']:.2f}, "
+                            f"Sharpe={perf['sharpe_ratio']:.2f}")
+        except Exception:
+            pass
+
+    # 自适应模型管理演示
+    if task == "classification" and period != "15min":
+        try:
+            adaptive_mgr = AdaptiveModelManager(
+                base_model=model if not use_ensemble else model.lgbm,
+                drift_window=ADAPTIVE_CONFIG.get("drift_window", 100),
+                drift_warning=ADAPTIVE_CONFIG.get("drift_warning_threshold", 0.05),
+                drift_threshold=ADAPTIVE_CONFIG.get("drift_threshold", 0.10),
+                update_interval=ADAPTIVE_CONFIG.get("update_interval", 500),
+                n_incremental_trees=ADAPTIVE_CONFIG.get("n_incremental_trees", 50),
+                base_threshold=POSITION_CONFIG.get("base_threshold", 0.55),
+            )
+            y_pred_test = model.predict(X_test)
+            test_vol = X_test["atr"].values if "atr" in X_test.columns else np.ones(len(X_test)) * 0.01
+            vol_mean = float(np.nanmean(test_vol))
+
+            # 模拟逐步喂入数据
+            batch_size = min(100, len(X_test))
+            status = adaptive_mgr.step(
+                y_true=y_test.values[:batch_size],
+                y_pred=y_pred_test[:batch_size],
+                current_volatility=float(np.nanmean(test_vol[:batch_size])),
+                mean_volatility=vol_mean,
+            )
+            summary = adaptive_mgr.get_status_summary()
+            logger.info(f"自适应模块: 漂移={status['drift_level']}, "
+                        f"阈值={status['threshold']:.3f}, "
+                        f"需要重训={status['needs_retrain']}")
         except Exception:
             pass
 

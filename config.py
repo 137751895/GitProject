@@ -112,6 +112,21 @@ POSITION_CONFIG = {
     "account_risk": 0.02,
     "max_position": 1.0,
     "base_threshold": 0.55,
+    "max_drawdown": 0.15,
+    "drawdown_warning": 0.08,
+    "max_daily_loss": 0.03,
+    "max_daily_trades": 20,
+}
+
+# 实时自适应配置
+ADAPTIVE_CONFIG = {
+    "drift_window": 100,           # 漂移检测滑动窗口
+    "drift_warning_threshold": 0.05,  # 准确率下降warning阈值
+    "drift_threshold": 0.10,       # 准确率下降drift阈值
+    "update_interval": 500,        # 在线学习更新间隔(样本数)
+    "n_incremental_trees": 50,     # 增量更新新增树数量
+    "vol_sensitivity": 1.0,        # 阈值波动率灵敏度
+    "performance_sensitivity": 0.5,  # 阈值性能灵敏度
 }
 
 # 预测目标: future_regime 的分类标签
