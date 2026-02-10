@@ -10,6 +10,9 @@
 - [代码文件功能说明](#代码文件功能说明)
 - [各周期机器学习模型选择](#各周期机器学习模型选择)
 - [15分钟LSTM特征预筛选](#15分钟lstm特征预筛选)
+- [深度特征变换](#深度特征变换)
+- [智能标签系统](#智能标签系统)
+- [混合智能交易系统](#混合智能交易系统)
 - [特征列表](#特征列表)
 - [预测目标](#预测目标)
 - [特征评估报告](#特征评估报告)
@@ -31,6 +34,7 @@ GitProject/
 │   ├── __init__.py
 │   ├── feature_engineering.py         # 特征工程主模块
 │   ├── feature_engineering_enhanced.py # 增强特征模块（微观结构/高级波动率/缺口衰减）
+│   ├── feature_transforms.py         # 深度特征变换模块（非线性/跨周期/变化率/条件/交互）
 │   ├── market_regime.py              # 市场状态识别模块
 │   └── rolling_numba.py             # Numba加速滚动计算模块
 ├── models/
@@ -39,6 +43,8 @@ GitProject/
 │   ├── ensemble_model.py             # 模型集成模块
 │   ├── multi_timeframe.py            # 多时间框架协同模块（15min→5min→1min层级协同）
 │   ├── xgb_feature_selector.py      # XGBoost特征预筛选模块（15分钟LSTM专用）
+│   ├── smart_labels.py              # 智能标签生成模块（五级信号+质量评分）
+│   ├── hybrid_trading.py            # 混合智能交易系统（五专家加权投票）
 │   ├── adaptive_learning.py          # 实时自适应模块（在线学习/漂移检测/自适应阈值）
 │   └── position_sizing.py            # 风险预算与仓位管理模块
 └── backtest/
@@ -67,7 +73,10 @@ GitProject/
 | `ADAPTIVE_CONFIG` | 实时自适应配置（漂移检测/在线学习/阈值灵敏度） |
 | `MULTI_TIMEFRAME_CONFIG` | 多时间框架协同配置（中性区间/入场阈值/优化阈值/信号等级） |
 | `ENHANCED_FEATURE_CONFIG` | 增强特征配置（微观结构/高级波动率/缺口衰减/Numba加速） |
-| `FEATURE_HIERARCHY` | 5层分层特征结构（level1_price → level5_cross） |
+| `FEATURE_TRANSFORM_CONFIG` | 深度特征变换配置（非线性变换/变化率特征列表） |
+| `SMART_LABEL_CONFIG` | 智能标签配置（阈值/强信号倍数/质量权重） |
+| `HYBRID_SYSTEM_CONFIG` | 混合专家系统配置（信号阈值/仓位/Kelly参数） |
+| `FEATURE_HIERARCHY` | 6层分层特征结构（level1_price → level6_transforms） |
 
 ### `features/feature_engineering.py` — 特征工程主模块
 
@@ -94,8 +103,8 @@ GitProject/
 | `compute_candle_features()` | K线形态特征 | `body_ratio`, `upper_shadow_ratio`, `lower_shadow_ratio`, `candle_direction`, `amplitude`, `gap`, `gap_ratio` |
 | `compute_volatility_features()` | 波动率特征 | `volatility_*`, `return_ma_*`, `log_return` |
 | `compute_price_position()` | 价格位置特征 | `price_position`, `dist_to_high`, `dist_to_low` |
-| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减） | 84~92个特征 |
-| `get_feature_hierarchy()` | **获取分层特征结构**，按5层层级组织全部特征 | 层级字典 |
+| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换） | 118+个特征 |
+| `get_feature_hierarchy()` | **获取分层特征结构**，按6层层级组织全部特征 | 层级字典 |
 | `compute_prediction_targets()` | 预测目标 | `future_return`, `future_direction`, `future_volatility`, `future_regime` |
 
 ### `features/feature_engineering_enhanced.py` — 增强特征模块
@@ -107,6 +116,19 @@ GitProject/
 | `compute_microstructure_features()` | 微观结构分析特征 | `divergence`, `vwap_dev`, `vol_state`, `mom_slope`, `close_pos`, `rsi_slope`, `vol_zscore` |
 | `compute_advanced_volatility_features()` | 高级波动率特征 | `volatility_regime`, `vol_ratio`, `atr_pct`, `range_pct` |
 | `compute_gap_decay_features()` | 期货夜盘缺口衰减特征 | `gap_decay` |
+
+### `features/feature_transforms.py` — 深度特征变换模块
+
+在现有数据边界内最大化信息提取，不新增数据源，通过对已有特征进行深度加工提升信息密度。
+
+| 函数名 | 功能 | 输出特征 |
+|--------|------|----------|
+| `compute_nonlinear_transforms()` | 非线性变换（平方/对数/排名/Z-score） | `*_squared`, `*_log`, `*_rank`, `*_zscore` |
+| `compute_cross_period_ratios()` | 跨周期比率（不同窗口模拟多周期对比） | `rsi_fast_slow_ratio`, `volatility_ratio_fast_slow`, `ma_cross_ratio` |
+| `compute_feature_velocity()` | 特征变化率与加速度（一阶/二阶导数） | `*_velocity`, `*_acceleration`, `*_direction_consistency` |
+| `compute_contextual_features()` | 条件特征（基于市场状态的动态特征） | `rsi_high_vol`, `rsi_low_vol`, `momentum_in_trend`, `momentum_in_range` |
+| `compute_feature_interactions()` | 特征交互项（技术指标×量/仓交互效应） | `rsi_volume_interaction`, `momentum_vol_interaction`, `oi_price_alignment`, `oi_price_magnitude` |
+| `compute_all_transforms()` | **一键计算所有深度变换** | ~34个新特征 |
 
 ### `features/rolling_numba.py` — Numba加速滚动计算模块
 
@@ -183,7 +205,109 @@ LightGBM + XGBoost 加权集成，基于验证集自动分配权重。
 **预筛选流程：**
 
 ```
-原始特征 (84个) → XGBoost筛选 (5折CV) → Top 25特征 → LSTM训练
+原始特征 (118个) → XGBoost筛选 (5折CV) → Top 25特征 → LSTM训练
+```
+
+### `models/smart_labels.py` — 智能标签生成模块
+
+从简单二元分类升级为智能信号标签系统，生成五级交易信号和信号质量评分。
+
+**`SmartLabelGenerator` 类 — 智能标签生成器**
+
+**五级交易信号：**
+
+| 信号值 | 名称 | 条件 | 含义 |
+|--------|------|------|------|
+| **+2** | `strong_buy` | 大涨 + 持仓增 + 放量 | 强势看多 |
+| **+1** | `weak_buy` | 上涨但缺乏确认 | 弱看多 |
+| **0** | `neutral` | 变化幅度不足 | 不交易 |
+| **-1** | `weak_sell` | 下跌但缺乏确认 | 弱看空 |
+| **-2** | `strong_sell` | 大跌 + 持仓减 + 放量 | 强势看空 |
+
+**信号质量评分 (0~1)：**
+- 0.4 × 收益率幅度（波动率调整后）
+- 0.3 × 持仓确认度（持仓变化越大越确定）
+- 0.2 × 成交量确认（有放量确认为1）
+- 0.1 × 波动率环境适宜度（适中最好）
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `horizon` | 3 | 预测未来K线数量 |
+| `base_threshold` | 0.001 | 基础信号阈值 |
+| `strong_multiplier` | 2.0 | 强信号 = base_threshold × multiplier |
+| `vol_window` | 20 | 波动率计算窗口 |
+| `quality_weights` | (0.4, 0.3, 0.2, 0.1) | 信号质量各维度权重 |
+
+使用示例:
+```python
+from models.smart_labels import SmartLabelGenerator
+
+generator = SmartLabelGenerator(horizon=3)
+labels = generator.create_labels(df)
+
+print(labels["trading_signal"])   # 五级信号 (-2~+2)
+print(labels["signal_quality"])   # 质量评分 (0~1)
+print(labels["expected_return"])  # 预期收益率
+```
+
+### `models/hybrid_trading.py` — 混合智能交易系统
+
+整合五个独立交易专家，通过加权投票融合信号，经过自适应风控调整生成最终交易决策。
+
+**三层决策架构：**
+
+```
+┌────────────────────────┐
+│ 信号生成层 (5个专家)     │
+│  趋势 | 回归 | 突破     │
+│  量价 | 持仓             │
+└────────┬───────────────┘
+         ▼
+┌────────────────────────┐
+│ 信号融合层 (加权投票)     │
+│  权重 × 信号 → 融合信号  │
+└────────┬───────────────┘
+         ▼
+┌────────────────────────┐
+│ 风险管理层 (自适应)       │
+│  波动率调整 + 仓位控制   │
+└────────────────────────┘
+```
+
+**五个交易专家：**
+
+| 专家 | 类名 | 信号逻辑 | 置信度依据 |
+|------|------|----------|-----------|
+| 趋势跟踪 | `TrendFollowingExpert` | MA快>MA慢→做多, MA快<MA慢→做空 | 趋势强度 × 方向一致性 |
+| 均值回归 | `MeanReversionExpert` | RSI>70→卖出, RSI<30→买入 | RSI偏离50的程度 |
+| 突破交易 | `BreakoutExpert` | 突破N日高→做多, 跌破N日低→做空 | 突破幅度 / 前价格 |
+| 量价关系 | `VolumePriceExpert` | 涨+放量→做多, 跌+放量→做空 | 成交量超出均值的程度 |
+| 持仓确认 | `OIConfirmationExpert` | 持仓价格同向→趋势延续, 反向→可能反转 | 协同一致性 × 持仓变化幅度 |
+
+**`HybridTradingSystem` 类：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `signal_threshold` | 0.3 | 最低融合信号强度阈值（低于此值不交易） |
+| `max_position` | 0.2 | 最大仓位比例（20%） |
+| `target_win_rate` | 0.7 | Kelly公式目标胜率 |
+| `target_win_loss_ratio` | 2.0 | Kelly公式目标盈亏比 |
+
+使用示例:
+```python
+from models.hybrid_trading import HybridTradingSystem
+
+system = HybridTradingSystem()
+result = system.predict(df)
+
+print(result["final_signal"])       # +1/-1/0
+print(result["position_size"])      # 0~0.2
+print(result["confidence"])         # 0~1
+print(result["experts_breakdown"])  # 各专家信号明细
+
+# 批量预测
+batch = system.predict_batch(df, window=100)
+print(batch["signal"].value_counts())
 ```
 
 ### `models/multi_timeframe.py` — 多时间框架协同模块
@@ -435,7 +559,7 @@ print(f"Sharpe: {perf['sharpe_ratio']:.2f}")
 
 ### `backtest/feature_selector.py` — 回测与特征选择模块
 
-时间序列交叉验证 + 8种特征选择方法（含稳定性选择和递归特征消除）。现在评估 **10个特征组**。
+时间序列交叉验证 + 8种特征选择方法（含稳定性选择和递归特征消除）。现在评估 **11个特征组**（含深度变换组）。
 
 ---
 
@@ -572,14 +696,137 @@ Step 6: 对比实验 — 全量特征 vs 筛选特征
 
 ---
 
+## 深度特征变换
+
+### 设计理念
+
+> "真正的Alpha不是来自于更多数据，而是来自于更深刻的理解和数据关系挖掘。"
+
+在现有数据边界（OHLCV + 持仓量/仓差）内，通过对已有特征进行深度加工来最大化信息提取，不新增数据源，只提升信息密度。
+
+### 五类深度变换
+
+| 变换类别 | 说明 | 代表特征 | 交易价值 |
+|----------|------|----------|----------|
+| **非线性变换** | 对关键指标做平方/对数/排名/Z-score | `rsi_14_squared`, `macd_hist_zscore` | 捕捉极端值，消除异方差 |
+| **跨周期比率** | 用不同窗口模拟多周期对比 | `rsi_fast_slow_ratio`, `volatility_ratio_fast_slow` | 短期vs长期相对强弱 |
+| **特征变化率** | 指标的一阶/二阶导数 | `rsi_14_velocity`, `macd_hist_acceleration` | 趋势反转提前预警 |
+| **条件特征** | 基于市场状态的动态特征 | `rsi_high_vol`, `momentum_in_trend` | 同一指标在不同环境下的差异化表达 |
+| **特征交互** | 指标与量/仓的乘法交互 | `rsi_volume_interaction`, `oi_price_alignment` | 交叉验证信号可信度 |
+
+### 变换流程
+
+```
+原始84个特征 → 非线性变换(16个) + 跨周期比率(3个) + 变化率(9个)
+             + 条件特征(4个) + 交互项(4个) = 34个新特征
+             → 总计 ~118个特征
+```
+
+---
+
+## 智能标签系统
+
+### 从二元分类到五级信号
+
+传统方法使用简单的 `future_direction` (0=跌, 1=涨) 作为预测目标，存在以下问题：
+- 忽略了价格变化的**幅度**信息
+- 所有信号同等对待，不区分**信号质量**
+- 未考虑**持仓量和成交量**的确认作用
+
+智能标签系统通过五级信号和质量评分解决这些问题。
+
+### 运行智能标签
+
+```bash
+# 使用默认配置
+python ml_pipeline.py --smart-labels
+
+# 指定周期和数据量
+python ml_pipeline.py --smart-labels --period 5min --n-rows 5000
+```
+
+### 输出示例
+
+```
+============================================================
+智能标签生成系统
+周期: 5min
+============================================================
+
+标签统计 (共5000个有效样本):
+  strong_sell (强势看空): 352 (7.0%)
+  weak_sell (弱看空): 1505 (30.1%)
+  neutral (中性/不交易): 1190 (23.8%)
+  weak_buy (弱看多): 1611 (32.2%)
+  strong_buy (强势看多): 342 (6.8%)
+
+信号质量统计:
+  平均质量: 0.666
+  高质量信号 (>0.6): 3272
+```
+
+---
+
+## 混合智能交易系统
+
+### 设计理念
+
+> "70%胜率不是来自于更复杂的模型，而是来自于更聪明的特征工程、更精细的信号定义、更严格的风险控制。"
+
+不依赖单一ML模型，而是让多个具有不同"交易员思维"的专家各司其职，通过加权投票决定最终信号。
+
+### 运行混合系统
+
+```bash
+# 使用默认配置
+python ml_pipeline.py --hybrid
+
+# 指定周期和数据量
+python ml_pipeline.py --hybrid --period 5min --n-rows 5000
+```
+
+### 输出示例
+
+```
+============================================================
+混合智能交易系统
+周期: 5min
+============================================================
+
+单点预测 (最新K线):
+  最终信号: -1 (1=做多, -1=做空, 0=观望)
+  建议仓位: 0.0245
+  综合置信度: 0.1519
+  融合信号: -0.5225
+  专家一致性: 50.00%
+
+各专家信号明细:
+  趋势跟踪: 信号=+1.0, 置信度=0.003
+  均值回归: 信号=+0.0, 置信度=0.363
+  突破交易: 信号=+0.0, 置信度=0.000
+  量价关系: 信号=-1.0, 置信度=0.796
+  持仓确认: 信号=+0.0, 置信度=0.357
+
+批量预测 (窗口=100):
+  总样本: 4900
+  做多信号: 1294 (26.4%)
+  做空信号: 1256 (25.6%)
+  观望: 2350 (48.0%)
+  平均置信度: 0.1374
+  平均一致性: 75.24%
+```
+
+---
+
 ## 特征列表
 
 ### 分层特征结构 (Feature Hierarchy)
 
-系统采用 **5层分层特征结构**，从基础价格到高阶跨周期特征逐层构建。这种层级设计的优势是：
+系统采用 **6层分层特征结构**，从基础价格到高阶深度变换逐层构建。这种层级设计的优势是：
 - **低层特征**（Level 1-2）计算快、解释性强，可用于基础过滤
 - **中层特征**（Level 3）技术指标振荡器，覆盖动量和波动率信号
 - **高层特征**（Level 4-5）信息密度大，适合捕捉复杂市场模式
+- **深度变换**（Level 6）通过非线性/跨周期/交互变换最大化信息提取
 - 模型可以按层级选择性地加载特征，灵活控制复杂度
 
 ```
@@ -593,6 +840,7 @@ Step 6: 对比实验 — 全量特征 vs 筛选特征
       'level3_momentum': 动量与波动率特征 — 技术指标振荡器 (30个)
       'level4_micro':    微观结构特征 — 资金流向与持仓分析 (16个)
       'level5_cross':    跨周期与高级组合特征 (9个)
+      'level6_transforms': 深度变换特征 — 非线性/跨周期/变化率/交互 (34个)
   }
 ```
 
@@ -658,13 +906,34 @@ Step 6: 对比实验 — 全量特征 vs 筛选特征
 | `regime_duration` | 当前市场状态已持续的K线数量 |
 | `regime_change_prob` | 滚动窗口内市场状态转换概率 |
 
+#### Level 6: 深度变换特征（~34个）— 非线性/跨周期/变化率/交互
+
+| 特征名 | 说明 |
+|--------|------|
+| `rsi_14_squared`, `macd_hist_squared`, ... | 平方项（放大极端值信号） |
+| `rsi_14_log`, `macd_hist_log`, ... | 对数变换（降低异方差） |
+| `rsi_14_rank`, `macd_hist_rank`, ... | 滚动百分位排名（相对位置） |
+| `rsi_14_zscore`, `macd_hist_zscore`, ... | Z-score标准化（偏离度） |
+| `rsi_fast_slow_ratio` | 快速RSI(6) / 慢速RSI(24) 比率 |
+| `volatility_ratio_fast_slow` | 短期波动率(5) / 长期波动率(20) 比率 |
+| `ma_cross_ratio` | 快速MA(5) / 慢速MA(20) 比率 |
+| `rsi_14_velocity`, `macd_hist_velocity`, ... | 一阶导数（3周期变化率） |
+| `rsi_14_acceleration`, `macd_hist_acceleration`, ... | 二阶导数（加速度） |
+| `*_direction_consistency` | 5周期内变化方向一致性 |
+| `rsi_high_vol` / `rsi_low_vol` | 高/低波动环境下的RSI |
+| `momentum_in_trend` / `momentum_in_range` | 趋势/震荡环境下的动量 |
+| `rsi_volume_interaction` | RSI × 量比（超买超卖+放量=强信号） |
+| `momentum_vol_interaction` | MACD柱 / ATR（波动率标准化动量） |
+| `oi_price_alignment` | 持仓变化×价格变化方向（+1=同向=延续, -1=反向=反转） |
+| `oi_price_magnitude` | 持仓变化幅度 / 价格变化幅度 |
+
 ### 各周期窗口参数差异
 
 | 参数 | 1分钟 | 5分钟 | 15分钟 |
 |------|-------|-------|--------|
 | MA/EMA窗口 | 5, 10, 20, 60, 120 | 5, 10, 20, 60 | 5, 10, 20, 40 |
 | 成交量窗口 | 5, 10, 20, 60 | 5, 10, 20 | 5, 10, 20 |
-| 总特征数 | ~92 | ~84 | ~84 |
+| 总特征数 | ~126 | ~118 | ~118 |
 
 ---
 
@@ -691,10 +960,10 @@ Step 6: 对比实验 — 全量特征 vs 筛选特征
 4. **前向特征选择** — 逐步添加最优特征
 5. **稳定性选择** — LassoCV多次采样，统计特征选中频率
 6. **递归特征消除 (RFE)** — 逐步移除最不重要特征
-7. **特征组评估** — 将全部特征分为 **10个组**（新增微观结构组和高级波动率组），分别评估成功率
+7. **特征组评估** — 将全部特征分为 **11个组**（含深度变换组），分别评估成功率
 8. **综合最佳特征选择** — 综合重要性 + 互信息 + CV验证
 
-### 10个特征组
+### 11个特征组
 
 | 特征组 | 特征数 | 说明 |
 |--------|--------|------|
@@ -708,6 +977,7 @@ Step 6: 对比实验 — 全量特征 vs 筛选特征
 | 市场状态 | 10 | 趋势/波动率/反转/持续时间/转换概率 |
 | **微观结构** | **8** | **divergence/vwap_dev/vol_state/mom_slope/close_pos/rsi_slope/vol_zscore/gap_decay** |
 | **高级波动率** | **4** | **volatility_regime/vol_ratio/atr_pct/range_pct** |
+| **深度变换** | **~24** | **非线性/跨周期/变化率/条件/交互变换特征** |
 
 ---
 
@@ -788,6 +1058,18 @@ python ml_pipeline.py --multi-timeframe
 # 多时间框架 + 指定数据量
 python ml_pipeline.py --multi-timeframe --n-rows 2000
 
+# 智能标签系统（五级信号+质量评分）
+python ml_pipeline.py --smart-labels
+
+# 智能标签 + 指定周期
+python ml_pipeline.py --smart-labels --period 5min --n-rows 5000
+
+# 混合智能交易系统（五专家加权投票）
+python ml_pipeline.py --hybrid
+
+# 混合系统 + 指定数据量
+python ml_pipeline.py --hybrid --period 5min --n-rows 5000
+
 # 15分钟LSTM特征预筛选（XGBoost筛选→LSTM训练对比）
 python ml_pipeline.py --feature-selection
 
@@ -804,6 +1086,8 @@ python ml_pipeline.py --feature-selection --n-features 20
 | `--n-rows` | int | `5000` | 模拟数据行数 |
 | `--skip-feature-selection` | flag | — | 跳过特征选择步骤 |
 | `--multi-timeframe` | flag | — | 运行多时间框架协同交易系统（自动训练三个周期模型并协同生成信号） |
+| `--smart-labels` | flag | — | 运行智能标签生成系统（五级信号+质量评分） |
+| `--hybrid` | flag | — | 运行混合智能交易系统（五专家加权投票） |
 | `--feature-selection` | flag | — | 运行15分钟LSTM特征预筛选流程（XGBoost筛选→LSTM训练对比） |
 | `--n-features` | int | `25` | 特征预筛选：选择的特征数量（配合 `--feature-selection` 使用） |
 
@@ -827,12 +1111,13 @@ python ml_pipeline.py --period 5min --target future_direction --n-rows 2000
 ============================================================
 
 # 步骤1: 数据准备（分层特征结构）
-特征数量: 84, 样本数量: 1901
+特征数量: 118, 样本数量: 4854
   level1_price (基础价格特征 — OHLCV直接衍生): 13个特征
   level2_trend (趋势特征 — 均线与布林带): 16个特征
   level3_momentum (动量与波动率特征 — 技术指标振荡器): 30个特征
   level4_micro (微观结构特征 — 资金流向与持仓分析): 16个特征
   level5_cross (跨周期与高级组合特征 — 市场状态与波动率状态): 9个特征
+  level6_transforms (深度变换特征 — 非线性/跨周期/变化率/交互): 34个特征
 
 # 步骤2: 模型训练（集成模型）
 使用 LightGBM+XGBoost 集成模型...
@@ -874,13 +1159,15 @@ vwap_dev             0.020     ← 新增微观结构特征入选Top 10
 
 1. **高级波动率组排名第1**（0.527）— 新增的 `volatility_regime`, `vol_ratio`, `atr_pct`, `range_pct` 特征预测能力最强
 2. **微观结构特征入选最佳特征集** — `vwap_dev` 和 `vol_zscore` 被综合特征选择选入Top 20
-3. **特征总数提升** — 从62-70个增至84-92个（含10个市场状态特征 + 12个增强特征）
+3. **特征总数提升** — 从62-70个增至118+个（含10个市场状态特征 + 12个增强特征 + 34个深度变换特征）
 4. **Numba加速** — 增强特征模块使用numba加速的rolling计算，适合高频数据场景
 5. **回撤保护** — 自动追踪账户回撤，达到预警水平(8%)后线性缩减仓位，达到最大回撤(15%)后停止开仓
 6. **自适应阈值** — 基于波动率和模型性能动态调整交易阈值，高波动率/低性能时自动提高阈值
 7. **概念漂移检测** — 实时监控模型性能，当准确率下降超过10%时触发重训建议
 8. **多时间框架协同** — 通过15min→5min→1min层级决策链，产生A/B/C等级交易信号，A级(三周期共振)信号最强
-9. **LSTM特征预筛选** — XGBoost代理筛选器将84个特征筛选至25个，特征减少70%，降低LSTM过拟合风险
+9. **LSTM特征预筛选** — XGBoost代理筛选器将118个特征筛选至25个，特征减少约80%，降低LSTM过拟合风险
+10. **智能标签系统** — 五级信号（-2~+2）替代简单二元分类，综合价格/持仓/成交量生成信号质量评分
+11. **混合专家系统** — 五个交易专家（趋势/回归/突破/量价/持仓）加权投票，48%观望过滤低质量信号
 
 ### 示例：多时间框架协同交易
 
