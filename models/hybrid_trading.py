@@ -217,7 +217,7 @@ class VolumePriceExpert:
         else:
             confidence = 0.0
 
-        return signal, min(confidence / 2.0, 1.0)  # 归一化到0~1
+        return signal, min(confidence / 2.0, 1.0)  # 除以2归一化Z-score到0~1范围
 
 
 class OIConfirmationExpert:
@@ -516,7 +516,7 @@ class HybridTradingSystem:
             - (1 - self.target_win_rate) / self.target_win_loss_ratio
         )
 
-        # 波动率调整（高波动率时缩减仓位）
+        # 波动率调整（高波动率时缩减仓位，系数10.0使波动率0.1时缩减约50%）
         vol_adjustment = 1.0 / (1.0 + volatility * 10.0)
 
         # 信号质量
@@ -527,7 +527,7 @@ class HybridTradingSystem:
             / n_experts
         )
 
-        # 最终仓位
+        # 最终仓位（Kelly系数缩放至30%以降低风险，因实际胜率/盈亏比与目标有偏差）
         position_size = kelly_fraction * 0.3 * vol_adjustment * signal_quality
         position_size = float(np.clip(
             position_size, 0.0, self.max_position

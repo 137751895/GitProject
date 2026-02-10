@@ -259,9 +259,11 @@ def compute_feature_interactions(df):
         result["oi_price_alignment"] = (
             np.sign(df["oi_change"]) * np.sign(returns)
         )
+        # 限制比值上界，防止价格变化极小时产生极端值
+        max_oi_price_ratio = 100.0
         result["oi_price_magnitude"] = (
             df["oi_change"].abs() / (returns.abs() + 1e-8)
-        ).clip(upper=100.0)
+        ).clip(upper=max_oi_price_ratio)
 
     return pd.DataFrame(result, index=df.index)
 

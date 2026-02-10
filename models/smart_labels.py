@@ -109,6 +109,7 @@ class SmartLabelGenerator:
             self.vol_window, min_periods=5
         ).std()
         vol_median = volatility.expanding(min_periods=self.vol_window).median()
+        # 波动率比值裁剪至[0.5, 2.0]，防止极端波动率产生不合理的阈值
         dynamic_threshold = self.base_threshold * (
             volatility / (vol_median + 1e-8)
         ).clip(lower=0.5, upper=2.0)
