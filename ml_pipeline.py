@@ -416,6 +416,7 @@ def run_multi_timeframe(n_rows=5000, target="future_direction"):
     logger.info(f"  中性(无信号): {summary['n_neutral']}")
     logger.info(f"  A级信号(三周期共振): {summary.get('grade_A', 0)}")
     logger.info(f"  B级信号(双周期确认): {summary.get('grade_B', 0)}")
+    logger.info(f"  C级信号(部分确认): {summary.get('grade_C', 0)}")
     logger.info(f"  平均信号强度: {summary['avg_signal_strength']:.3f}")
     logger.info(f"  平均一致性评分: {summary['avg_agreement']:.3f}")
     logger.info("=" * 60)

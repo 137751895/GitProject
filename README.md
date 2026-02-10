@@ -36,6 +36,7 @@ GitProject/
 │   ├── __init__.py
 │   ├── ml_models.py                   # 机器学习模型模块
 │   ├── ensemble_model.py             # 模型集成模块
+│   ├── multi_timeframe.py            # 多时间框架协同模块（15min→5min→1min层级协同）
 │   ├── adaptive_learning.py          # 实时自适应模块（在线学习/漂移检测/自适应阈值）
 │   └── position_sizing.py            # 风险预算与仓位管理模块
 └── backtest/
@@ -62,6 +63,7 @@ GitProject/
 | `ENSEMBLE_CONFIG` | 集成模型配置 |
 | `POSITION_CONFIG` | 仓位管理配置（含回撤保护和日内限额） |
 | `ADAPTIVE_CONFIG` | 实时自适应配置（漂移检测/在线学习/阈值灵敏度） |
+| `MULTI_TIMEFRAME_CONFIG` | 多时间框架协同配置（中性区间/入场阈值/优化阈值/信号等级） |
 | `ENHANCED_FEATURE_CONFIG` | 增强特征配置（微观结构/高级波动率/缺口衰减/Numba加速） |
 | `FEATURE_HIERARCHY` | 5层分层特征结构（level1_price → level5_cross） |
 
@@ -165,6 +167,108 @@ GitProject/
 ### `models/ensemble_model.py` — 模型集成模块
 
 LightGBM + XGBoost 加权集成，基于验证集自动分配权重。
+
+### `models/multi_timeframe.py` — 多时间框架协同模块
+
+解决各周期模型独立运行的问题，通过层级化信号融合提升交易质量。
+
+**协同策略架构：**
+
+```
+┌─────────────────┐
+│  15分钟模型       │ ← 确定趋势方向（看多/看空/中性）
+│  TrendDirection  │   中性时不开仓
+└────────┬────────┘
+         ▼
+┌─────────────────┐
+│  5分钟模型        │ ← 寻找入场时机（信号必须与大方向一致）
+│  EntryTiming     │   方向不一致时过滤掉
+└────────┬────────┘
+         ▼
+┌─────────────────┐
+│  1分钟模型        │ ← 优化入场价格（在入场窗口内择时）
+│  EntryPrice      │   选择最优入场点
+└────────┬────────┘
+         ▼
+┌─────────────────┐
+│  最终交易信号     │   方向 + 强度 + 入场质量
+└─────────────────┘
+```
+
+**`TrendDirectionModel` 类 — 15分钟趋势方向模型**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `neutral_zone` | 0.10 | 中性区间宽度（概率在0.4~0.6之间判定为中性） |
+
+- 输出方向: +1(看多) / -1(看空) / 0(中性)
+- 输出确信度: 0~1（概率偏离0.5的程度）
+- 中性方向时不允许开仓（最关键的过滤规则）
+
+**`EntryTimingModel` 类 — 5分钟入场时机模型**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `entry_threshold` | 0.60 | 入场概率阈值（需超过此值才触发） |
+
+- 做多条件: 15分钟看多 **且** 5分钟上涨概率 > 0.60
+- 做空条件: 15分钟看空 **且** 5分钟下跌概率 > 0.60
+- 方向不一致的信号自动被过滤
+
+**`EntryPriceOptimizer` 类 — 1分钟入场价格优化模型**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `optimization_threshold` | 0.55 | 1分钟确认阈值（概率>0.55认为是好入场点） |
+
+- 在5分钟触发入场后，用1分钟模型评估当前是否为最优入场点
+- 输出入场质量评分（entry_score, 0~1）
+
+**`MultiTimeframeCoordinator` 类 — 协同管理器**
+
+整合三个周期模型，生成最终交易信号并评级。
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `min_grade` | "C" | 最低信号质量等级，低于此等级的信号被过滤 |
+
+**信号质量等级：**
+
+| 等级 | 名称 | 条件 | 信号强度 |
+|------|------|------|----------|
+| **A** | 三周期共振 (resonance) | 15min+5min+1min三个周期完全一致 | 最强 |
+| **B** | 双周期确认 (confirmed) | 15min+5min方向一致，1min部分确认(评分>0.5) | 中等 |
+| **C** | 部分确认 (partial) | 15min+5min方向一致，1min未确认(评分≤0.5) | 较弱(打7折) |
+| **-** | 无信号 | 方向不一致或中性 | 无 |
+
+**信号强度计算：**
+- A级: `0.4 × 15min确信度 + 0.35 × 5min信号强度 + 0.25 × 1min入场评分`
+- B级: `0.5 × 15min确信度 + 0.5 × 5min信号强度`
+- C级: `(0.6 × 15min确信度 + 0.4 × 5min信号强度) × 0.7`
+
+使用示例:
+```python
+from models.multi_timeframe import MultiTimeframeCoordinator
+
+coordinator = MultiTimeframeCoordinator(
+    neutral_zone=0.10,          # 15分钟中性区间
+    entry_threshold=0.60,       # 5分钟入场阈值
+    optimization_threshold=0.55, # 1分钟优化阈值
+    min_grade="C",              # 最低信号等级
+)
+coordinator.set_models(model_15m, model_5m, model_1m)
+
+result = coordinator.generate_signals(X_15m, X_5m, X_1m)
+
+print(result["final_signal"])     # 最终信号 (+1/-1/0)
+print(result["signal_grade"])     # 信号等级 ("A"/"B"/"C"/"-")
+print(result["signal_strength"])  # 信号强度 (0~1)
+print(result["agreement_score"])  # 三周期一致性 (0~1)
+
+summary = coordinator.get_signal_summary()
+print(f"A级信号: {summary['grade_A']}")
+print(f"B级信号: {summary['grade_B']}")
+```
 
 ### `models/adaptive_learning.py` — 实时自适应模块
 
@@ -542,6 +646,12 @@ python ml_pipeline.py --period 5min --n-rows 10000
 
 # 跳过特征选择（仅训练和评估）
 python ml_pipeline.py --period 5min --skip-feature-selection
+
+# 多时间框架协同交易系统（15min→5min→1min层级协同）
+python ml_pipeline.py --multi-timeframe
+
+# 多时间框架 + 指定数据量
+python ml_pipeline.py --multi-timeframe --n-rows 2000
 ```
 
 ### 命令行参数
@@ -552,6 +662,7 @@ python ml_pipeline.py --period 5min --skip-feature-selection
 | `--target` | str | `future_direction` | 预测目标：`future_direction`、`future_return`、`future_regime` |
 | `--n-rows` | int | `5000` | 模拟数据行数 |
 | `--skip-feature-selection` | flag | — | 跳过特征选择步骤 |
+| `--multi-timeframe` | flag | — | 运行多时间框架协同交易系统（自动训练三个周期模型并协同生成信号） |
 
 ---
 
@@ -625,5 +736,56 @@ vwap_dev             0.020     ← 新增微观结构特征入选Top 10
 5. **回撤保护** — 自动追踪账户回撤，达到预警水平(8%)后线性缩减仓位，达到最大回撤(15%)后停止开仓
 6. **自适应阈值** — 基于波动率和模型性能动态调整交易阈值，高波动率/低性能时自动提高阈值
 7. **概念漂移检测** — 实时监控模型性能，当准确率下降超过10%时触发重训建议
+8. **多时间框架协同** — 通过15min→5min→1min层级决策链，产生A/B/C等级交易信号，A级(三周期共振)信号最强
+
+### 示例：多时间框架协同交易
+
+```bash
+python ml_pipeline.py --multi-timeframe --n-rows 1000
+```
+
+**输出解读：**
+
+```
+============================================================
+多时间框架协同交易系统
+============================================================
+
+# 步骤1: 三个周期独立训练
+训练15分钟模型（趋势方向）...
+  15分钟模型测试集: {'accuracy': 0.468, ...}
+
+训练5分钟模型（入场时机）...
+  集成模型权重: {'lightgbm': 0.496, 'xgboost': 0.504}
+
+训练1分钟模型（入场价格）...
+  集成模型权重: {'lightgbm': 0.498, 'xgboost': 0.502}
+
+# 步骤2: 创建协同系统并生成信号
+创建多时间框架协同系统...
+协同信号生成: 139 个样本
+
+# 步骤3: 协同信号统计
+多时间框架协同信号统计:
+  总样本数: 139
+  做多信号: 0
+  做空信号: 97
+  中性(无信号): 42             ← 42个样本被15分钟中性过滤
+  A级信号(三周期共振): 9       ← 最强信号，三个周期完全一致
+  B级信号(双周期确认): 5       ← 15分钟+5分钟一致，1分钟部分确认
+  C级信号(部分确认): 83        ← 15分钟+5分钟一致，1分钟未确认
+  平均信号强度: 0.556
+  平均一致性评分: 0.698
+============================================================
+多时间框架协同交易系统完成!
+```
+
+**协同信号解读：**
+- **42个中性(无信号)**: 15分钟模型判定方向不明确，自动过滤（核心保护机制）
+- **9个A级信号**: 三个周期（15min/5min/1min）方向完全一致的最强信号
+- **5个B级信号**: 15分钟和5分钟方向一致，1分钟部分确认（入场评分>0.5）
+- **83个C级信号**: 15分钟和5分钟方向一致，但1分钟未确认（强度打7折）
+- **信号强度0.556**: 综合三个周期的加权信号强度
+- **一致性0.698**: 三个周期之间的方向一致程度
 
 > **注意**：当前使用模拟随机数据，实际商品期货数据的预测效果会因市场行情不同而有差异。接入真实行情数据后需要重新训练和评估。

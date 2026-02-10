@@ -472,12 +472,19 @@ class MultiTimeframeCoordinator:
                 )
             elif entry_sig[i] != 0 and trend_dir[i] != 0:
                 if entry_sig[i] == trend_dir[i]:
-                    # B级: 15min+5min一致, 1min部分确认
-                    signal_grade[i] = "B"
-                    signal_strength[i] = (
-                        0.5 * trend_conf[i] + 0.5 * entry_str[i]
-                    )
-                    # B级时使用5分钟信号方向
+                    if entry_score[i] > 0.5:
+                        # B级: 15min+5min一致, 1min部分确认
+                        signal_grade[i] = "B"
+                        signal_strength[i] = (
+                            0.5 * trend_conf[i] + 0.5 * entry_str[i]
+                        )
+                    else:
+                        # C级: 仅15min+5min一致, 1min未确认
+                        signal_grade[i] = "C"
+                        signal_strength[i] = (
+                            0.6 * trend_conf[i] + 0.4 * entry_str[i]
+                        ) * 0.7  # C级信号强度打7折
+                    # B/C级使用5分钟信号方向
                     final_sig[i] = entry_sig[i]
 
         # 应用最低等级过滤
