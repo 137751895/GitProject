@@ -214,10 +214,14 @@ def train_and_evaluate(X, y, period="5min", task="classification"):
 
             from models.var_stress import RiskModels  # [新增]
             var_model = RiskModels()  # [新增]
-            ret_1d = pd.Series(X_test["close"].values).pct_change().dropna().tolist() if "close" in X_test.columns else pd.Series(probas).diff().fillna(0.0).tolist()  # [新增]
+            if "close" in X_test.columns:  # [新增]
+                ret_1d = pd.Series(X_test["close"].values).pct_change().dropna().tolist()  # [新增]
+            else:  # [新增]
+                ret_1d = pd.Series(probas).diff().fillna(0.0).tolist()  # [新增]
             var_results = var_model.calculate_comprehensive_var(ret_1d, confidence_levels=[0.95, 0.99], portfolio_value=1.0)  # [新增]
-            if len(var_results) > 0:  # [新增]
-                var99 = float([r for r in var_results if r.confidence_level == 0.99][0].var_value)  # [新增]
+            var99_list = [r for r in var_results if r.confidence_level == 0.99]  # [新增]
+            if len(var99_list) > 0:  # [新增]
+                var99 = float(var99_list[0].var_value)  # [新增]
                 if var99 > VAR_CONFIG.get("var99_gate", 0.02):  # [新增]
                     signals["position_size"] = signals["position_size"] * VAR_CONFIG.get("position_scale_on_breach", 0.5)  # [新增]
 
