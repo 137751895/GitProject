@@ -125,7 +125,7 @@ def load_or_generate(period: str, n_rows: int = 5000) -> pd.DataFrame:
 
     Returns
     -------
-    tuple
+    tuple[pd.DataFrame, bool]
         (df, is_real) — DataFrame 和 是否为真实数据的标志
     """
     data_path = get_default_data_path(period)

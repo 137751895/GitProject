@@ -172,9 +172,13 @@ def step_feature_selection(X, y, period, task, xgb_n_features, logger):
         xgb_selected, xgb_imp_df = xgb_selector.fit_select(X, y)
         logger.info(f"  XGBoost 筛选出 {len(xgb_selected)} 个特征")
 
-        # Dynamic search
+        # Dynamic search (bounds from LSTM_FEATURE_SELECTION_CONFIG)
+        dynamic_min = sel_cfg.get("dynamic_min_features", 10)
+        dynamic_max = sel_cfg.get("dynamic_max_features", 40)
+        dynamic_step = sel_cfg.get("dynamic_step", 5)
         dynamic_result = xgb_selector.dynamic_feature_count(
-            X, y, min_features=10, max_features=min(40, X.shape[1]), step=5,
+            X, y, min_features=dynamic_min,
+            max_features=min(dynamic_max, X.shape[1]), step=dynamic_step,
         )
         optimal_n = dynamic_result["optimal_n_features"]
         logger.info(f"  动态搜索建议最佳特征数: {optimal_n}")
@@ -286,9 +290,12 @@ def step_backtest(X_use, y, model, period, task, metrics, is_real, logger):
     if task == "classification" and hasattr(model, "predict_proba"):
         try:
             probas = model.predict_proba(X_test)[:, 1]
-            trade_mask = probas > POSITION_CONFIG.get("base_threshold", 0.55)
+            threshold = POSITION_CONFIG.get("base_threshold", 0.55)
+            trade_mask = probas > threshold
             if np.sum(trade_mask) > 0:
-                actual_returns = (y_test.values[trade_mask] * 2 - 1) * 0.001
+                # 模拟收益: 二分类标签(0/1) → 方向(-1/+1)，乘以单笔收益幅度
+                simulated_return_per_bar = 0.001  # 单笔模拟收益幅度
+                actual_returns = (y_test.values[trade_mask] * 2 - 1) * simulated_return_per_bar
                 cost = COST_CONFIG.get("buy_rate", 0.0003)
                 actual_returns = actual_returns - cost
                 perf = compute_performance_metrics(actual_returns)

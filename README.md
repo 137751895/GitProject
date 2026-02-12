@@ -8,6 +8,7 @@
 
 - [项目结构](#项目结构)
 - [代码文件功能说明](#代码文件功能说明)
+- [真实数据流水线](#真实数据流水线)
 - [各周期机器学习模型选择](#各周期机器学习模型选择)
 - [15分钟LSTM特征预筛选](#15分钟lstm特征预筛选)
 - [深度特征变换](#深度特征变换)
@@ -27,13 +28,20 @@
 ```
 GitProject/
 ├── config.py                          # 全局配置文件
-├── ml_pipeline.py                     # 主流程入口脚本
+├── ml_pipeline.py                     # 主流程入口脚本（模拟数据）
+├── run_real_data_pipeline.py          # 真实数据全自动流水线（6步：加载→特征→筛选→训练→回测→预测）
 ├── requirements.txt                   # Python依赖
 ├── FirstProject.py                    # VN Trader 启动脚本（独立）
+├── factor_loader.py                   # 因子批量加载与索引对齐模块
+├── hyperopt_runner.py                 # Optuna/贝叶斯超参搜索模块
+├── signal_postprocess.py              # 截面TopN信号后处理模块
+├── scripts/
+│   └── load_real_data.py              # 真实K线CSV数据加载模块（列映射、校验、回退）
 ├── features/
 │   ├── __init__.py
 │   ├── feature_engineering.py         # 特征工程主模块
 │   ├── feature_engineering_enhanced.py # 增强特征模块（微观结构/高级波动率/缺口衰减）
+│   ├── feature_context.py             # 特征计算缓存上下文模块
 │   ├── feature_transforms.py         # 深度特征变换模块（非线性/跨周期/变化率/条件/交互）
 │   ├── market_regime.py              # 市场状态识别模块
 │   └── rolling_numba.py             # Numba加速滚动计算模块
@@ -46,10 +54,22 @@ GitProject/
 │   ├── smart_labels.py              # 智能标签生成模块（五级信号+质量评分）
 │   ├── hybrid_trading.py            # 混合智能交易系统（五专家加权投票）
 │   ├── adaptive_learning.py          # 实时自适应模块（在线学习/漂移检测/自适应阈值）
-│   └── position_sizing.py            # 风险预算与仓位管理模块
-└── backtest/
-    ├── __init__.py
-    └── feature_selector.py            # 回测与特征选择模块
+│   ├── position_sizing.py            # 风险预算与仓位管理模块
+│   ├── cost_model.py                 # 交易成本与止盈止损模块
+│   └── var_stress.py                 # VaR风险度量与压力测试模块
+├── backtest/
+│   ├── __init__.py
+│   └── feature_selector.py            # 回测与特征选择模块
+└── data/                              # 数据目录（不纳入版本控制）
+    ├── klines/KQi@SHFEag/            # 白银(ag)K线CSV数据
+    │   ├── KQi@SHFEag_1min.csv
+    │   ├── KQi@SHFEag_5min.csv
+    │   └── KQi@SHFEag_15min.csv
+    └── mx/                            # 流水线输出目录
+        ├── feature_selection_report_{period}.md
+        ├── backtest_report_{period}.md
+        ├── predictions_{period}.csv
+        └── models/                    # 已训练模型及配套文件
 ```
 
 ---
@@ -561,6 +581,181 @@ print(f"Sharpe: {perf['sharpe_ratio']:.2f}")
 
 时间序列交叉验证 + 8种特征选择方法（含稳定性选择和递归特征消除）。现在评估 **11个特征组**（含深度变换组）。
 
+### `run_real_data_pipeline.py` — 真实数据全自动流水线
+
+全自动6步流水线：数据加载 → 特征工程 → 特征筛选 → 模型训练 → 回测评估 → 预测保存。
+
+| 步骤 | 功能 | 输出 |
+|------|------|------|
+| Step 1 | 加载真实CSV数据（或回退到模拟数据） | 标准化DataFrame |
+| Step 2 | 计算全量118+个特征和预测目标 | X, y |
+| Step 3 | ExtraTrees+RF稳定性筛选；15min额外XGBoost预筛选 | `feature_selection_report_{period}.md` |
+| Step 4 | 按周期自动选择模型并训练 | 训练好的模型 |
+| Step 5 | 含交易成本和仓位约束的回测评估 | `backtest_report_{period}.md` |
+| Step 6 | 保存模型、特征列表、标准化器和预测结果 | `models/`, `predictions_{period}.csv` |
+
+### `scripts/load_real_data.py` — 真实数据加载模块
+
+加载白银(ag)等品种的K线CSV数据，自动完成列名映射（`dt` → `datetime`, `close_oi` → `open_interest`）、数据校验和类型转换。
+
+| 函数名 | 功能 |
+|--------|------|
+| `load_kline_csv(file_path)` | 读取CSV并返回标准化DataFrame |
+| `get_default_data_path(period)` | 获取默认数据路径 |
+| `load_or_generate(period, n_rows)` | 加载真实数据，文件不存在时回退到模拟数据 |
+
+### `models/cost_model.py` — 交易成本与止盈止损模块
+
+精细化交易成本计算和止损止盈逻辑（改进点 1.1）。
+
+### `models/var_stress.py` — VaR风险度量与压力测试模块
+
+提供三种VaR计算方法（历史法/参数法/蒙特卡洛）和压力测试（改进点 1.3）。
+
+### `hyperopt_runner.py` — 超参搜索模块
+
+Optuna和贝叶斯优化超参搜索（改进点 3.1/3.3），含L2归一化Pipeline（改进点 5.1）。
+
+### `signal_postprocess.py` — 信号后处理模块
+
+截面TopN排名后处理，按日期分组选取最强信号（改进点 2.5）。
+
+### `factor_loader.py` — 因子加载模块
+
+从多个CSV批量加载因子数据并按日期索引对齐（改进点 5.2）。
+
+### `features/feature_context.py` — 特征缓存上下文
+
+使用 `functools.cached_property` 避免重复计算（改进点 5.3）。
+
+---
+
+## 真实数据流水线
+
+### 概述
+
+`run_real_data_pipeline.py` 实现了从真实K线CSV数据到模型落地的**完整6步自动化流程**。若真实数据文件不存在，自动回退到模拟数据运行。
+
+### 数据格式要求
+
+CSV文件需放置在 `data/klines/KQi@SHFEag/` 目录下：
+
+| CSV列名 | hfml标准列名 | 说明 |
+|----------|-------------|------|
+| `dt` | `datetime`（索引） | 时间戳 |
+| `open` | `open` | 开盘价 |
+| `high` | `high` | 最高价 |
+| `low` | `low` | 最低价 |
+| `close` | `close` | 收盘价 |
+| `volume` | `volume` | 成交量 |
+| `close_oi` | `open_interest` | 收盘持仓量 |
+
+### 15分钟LSTM特殊处理流程
+
+15分钟周期采用 **XGBoost特征预筛选 → LSTM训练** 的双阶段流程：
+
+```
+原始数据 (15min OHLCV+仓差)
+    ↓
+特征工程 (121+个特征)
+    ↓
+基础筛选: ExtraTrees + RandomForest (稳定性评估)
+    ↓
+XGBoost 特征预筛选 (5折TimeSeriesSplit CV)
+    ↓
+动态搜索最佳特征数量 (达到95%最大准确率的最少特征)
+    ↓
+筛选后特征子集 (25~30个) → LSTM模型训练
+    ↓
+模型评估 + 保存 (含XGBoost筛选器)
+```
+
+查看筛选报告: `data/mx/feature_selection_report_15min.md`
+
+### 使用示例
+
+```bash
+# 5分钟周期（默认）— 完整流程
+python run_real_data_pipeline.py --period 5min
+
+# 15分钟周期 — 含XGBoost预筛选（保留30个特征）
+python run_real_data_pipeline.py --period 15min --xgb-n-features 30
+
+# 15分钟周期 — 自动搜索最佳特征数
+python run_real_data_pipeline.py --period 15min --xgb-n-features 0
+
+# 1分钟周期 — 跳过特征筛选（快速测试）
+python run_real_data_pipeline.py --period 1min --skip-feature-selection
+
+# 减少模拟数据量（快速验证）
+python run_real_data_pipeline.py --period 5min --n-rows 1000
+```
+
+### 命令行参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--period` | str | `5min` | K线周期：`1min`、`5min`、`15min` |
+| `--target` | str | `future_direction` | 预测目标 |
+| `--n-rows` | int | `5000` | 模拟数据行数（真实数据存在时忽略） |
+| `--skip-feature-selection` | flag | — | 跳过特征筛选 |
+| `--n-trials` | int | `30` | Optuna超参搜索次数 |
+| `--xgb-n-features` | int | `25` | 15min XGBoost预筛选保留特征数（0=自动搜索） |
+
+### 输出文件
+
+运行完成后在 `data/mx/` 目录生成以下文件：
+
+| 文件 | 说明 |
+|------|------|
+| `feature_selection_report_{period}.md` | 特征筛选报告（含ExtraTrees/RF/XGBoost分析） |
+| `backtest_report_{period}.md` | 回测报告（胜率/盈亏比/Sharpe/最大回撤） |
+| `predictions_{period}.csv` | 测试集预测结果（actual vs predicted） |
+| `models/{period}_{model}_{date}.pkl` | 已训练模型 |
+| `models/{period}_{model}_{date}_features.txt` | 特征名称列表 |
+| `models/{period}_{model}_{date}_scaler.pkl` | 标准化器（LSTM） |
+
+### 示例输出
+
+```bash
+python run_real_data_pipeline.py --period 5min --n-rows 2000
+```
+
+```
+======================================================================
+  商品期货ML量化模型 — 真实数据全自动流水线
+  周期: 5min  目标: future_direction  框架: xgboost
+======================================================================
+
+Step 1: 数据加载与预处理
+  数据类型: 模拟数据
+  数据形状: (2000, 6)
+
+Step 2: 特征工程全量计算
+  特征数量: 121, 样本数量: 1901
+
+Step 3: 特征筛选与稳定性评估
+  ExtraTrees Top 10: ...
+  RandomForest Top 10: ...
+
+Step 4: 模型训练
+  使用 LightGBM+XGBoost 集成模型...
+  测试集指标: accuracy=0.5524, f1=0.6322
+
+Step 5: 回测与绩效评估
+  回测报告已保存: data/mx/backtest_report_5min.md
+
+Step 6: 模型保存与预测输出
+  模型已保存: data/mx/models/5min_xgboost_20260212.pkl
+
+======================================================================
+  关键绩效摘要
+  特征数量: 40 / 原始 121
+  accuracy: 0.5524
+  win_rate: 0.5588
+======================================================================
+```
+
 ---
 
 ## 各周期机器学习模型选择
@@ -1024,8 +1219,28 @@ pip install -r requirements.txt
 - `xgboost >= 1.6.0`
 - `tensorflow >= 2.18.0`（仅15分钟LSTM模型需要）
 - `numba >= 0.56.0`（Numba加速，可选但强烈推荐）
+- `optuna >= 3.0.0`（超参搜索）
+- `bayesian-optimization >= 1.4.0`（贝叶斯优化）
+- `scipy >= 1.7.0`（VaR计算）
+- `joblib >= 1.1.0`（模型持久化）
 
-### 运行主流程
+### 运行真实数据流水线（推荐）
+
+```bash
+# 将白银(ag)K线CSV放入 data/klines/KQi@SHFEag/ 目录
+# 若无真实数据，自动回退到模拟数据
+
+# 5分钟周期（默认）
+python run_real_data_pipeline.py --period 5min
+
+# 15分钟周期（含XGBoost预筛选→LSTM）
+python run_real_data_pipeline.py --period 15min --xgb-n-features 30
+
+# 1分钟周期（跳过特征筛选快速测试）
+python run_real_data_pipeline.py --period 1min --skip-feature-selection
+```
+
+### 运行主流程（模拟数据）
 
 ```bash
 # 5分钟周期，预测涨跌方向（默认配置，使用集成模型）
