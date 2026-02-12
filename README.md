@@ -8,6 +8,7 @@
 
 - [项目结构](#项目结构)
 - [代码文件功能说明](#代码文件功能说明)
+- [特征工程可扩展性](#特征工程可扩展性)
 - [真实数据流水线](#真实数据流水线)
 - [各周期机器学习模型选择](#各周期机器学习模型选择)
 - [15分钟LSTM特征预筛选](#15分钟lstm特征预筛选)
@@ -41,6 +42,8 @@ GitProject/
 │   ├── __init__.py
 │   ├── feature_engineering.py         # 特征工程主模块
 │   ├── feature_engineering_enhanced.py # 增强特征模块（微观结构/高级波动率/缺口衰减）
+│   ├── feature_registry.py            # 特征注册表模块（装饰器式自动发现）
+│   ├── custom_features.py             # 自定义特征示例（@register_feature 用法演示）
 │   ├── feature_context.py             # 特征计算缓存上下文模块
 │   ├── feature_transforms.py         # 深度特征变换模块（非线性/跨周期/变化率/条件/交互）
 │   ├── market_regime.py              # 市场状态识别模块
@@ -123,8 +126,8 @@ GitProject/
 | `compute_candle_features()` | K线形态特征 | `body_ratio`, `upper_shadow_ratio`, `lower_shadow_ratio`, `candle_direction`, `amplitude`, `gap`, `gap_ratio` |
 | `compute_volatility_features()` | 波动率特征 | `volatility_*`, `return_ma_*`, `log_return` |
 | `compute_price_position()` | 价格位置特征 | `price_position`, `dist_to_high`, `dist_to_low` |
-| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换） | 118+个特征 |
-| `get_feature_hierarchy()` | **获取分层特征结构**，按6层层级组织全部特征 | 层级字典 |
+| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换 + 注册表自定义特征） | 120+个特征（随自定义特征增加） |
+| `get_feature_hierarchy()` | **获取分层特征结构**，按6层层级组织全部特征（自动合并注册表特征） | 层级字典 |
 | `compute_prediction_targets()` | 预测目标 | `future_return`, `future_direction`, `future_volatility`, `future_regime` |
 
 ### `features/feature_engineering_enhanced.py` — 增强特征模块
@@ -627,6 +630,92 @@ Optuna和贝叶斯优化超参搜索（改进点 3.1/3.3），含L2归一化Pipe
 ### `features/feature_context.py` — 特征缓存上下文
 
 使用 `functools.cached_property` 避免重复计算（改进点 5.3）。
+
+### `features/feature_registry.py` — 特征注册表模块
+
+装饰器式的特征自动发现与注册机制。详见 [特征工程可扩展性](#特征工程可扩展性) 章节。
+
+- `@register_feature(group, level, depends_on, output_names)` — 特征注册装饰器
+- `FeatureRegistry` — 全局单例注册表，管理所有自定义特征
+- 自动依赖检查、输出列名采集、层级/分组映射
+
+### `features/custom_features.py` — 自定义特征示例
+
+使用 `@register_feature` 装饰器的示例文件，演示如何用 **1 个文件、1 个装饰器** 添加新特征。
+
+---
+
+## 特征工程可扩展性
+
+### 设计目标
+
+**新增一个特征只需 1 处定义、0 处下游修改**：开发者在 `features/custom_features.py`（或任意文件）中用 `@register_feature` 装饰器定义特征计算函数，系统自动完成特征计算、层级归类、分组归类、筛选参与和模型训练。
+
+### 改进前 vs 改进后
+
+| 操作 | 改进前 | 改进后 |
+|------|--------|--------|
+| 定义特征计算逻辑 | 修改 `feature_engineering.py` | 在任意文件中定义函数 |
+| 更新层级结构 | 手动修改 `config.py` 的 `FEATURE_HIERARCHY` | **自动** |
+| 更新特征分组 | 手动修改 `feature_selector.py` 的 `get_recommended_feature_groups()` | **自动** |
+| 特征筛选/模型训练 | 无需修改 | 无需修改 |
+| **总修改文件数** | **3~4个** | **1个** |
+
+### 使用方法：添加新特征
+
+在 `features/custom_features.py` 中添加（或创建新文件后在 `compute_all_features` 中 `importlib.import_module` 导入）：
+
+```python
+from features.feature_registry import register_feature
+import pandas as pd
+
+@register_feature(
+    group="动量指标",                    # 特征分组（对应 feature_selector 的键）
+    level="level3_momentum",            # 层级（对应 FEATURE_HIERARCHY 的键）
+    description="RSI 14周期的5周期斜率", # 简短描述
+    depends_on=["rsi_14"],              # 依赖的已有特征（自动检查）
+    output_names=["rsi_14_slope_custom"], # 输出列名
+)
+def compute_rsi_14_slope(df, features_df=None, **kwargs):
+    """计算RSI(14)的5周期斜率。"""
+    slope = features_df["rsi_14"].diff(5) / 5.0
+    return pd.DataFrame({"rsi_14_slope_custom": slope}, index=df.index)
+```
+
+**系统自动处理的事项**：
+
+1. `compute_all_features()` 自动发现并计算该特征
+2. `get_feature_hierarchy()` 自动将 `rsi_14_slope_custom` 归入 `level3_momentum`
+3. `get_recommended_feature_groups()` 自动将其加入 `动量指标` 分组
+4. 特征筛选（ExtraTrees/RF/XGBoost）自动包含该特征
+5. 模型训练自动使用该特征（无需修改 `ml_pipeline.py`）
+
+### 注册表 API
+
+| 方法 | 说明 |
+|------|------|
+| `FeatureRegistry()` | 获取全局单例注册表 |
+| `.register(func, group, level, ...)` | 注册一个特征函数 |
+| `.get_all_entries()` | 获取所有已注册条目 |
+| `.get_group_mapping()` | 获取 `{分组名: [特征名]}` 映射 |
+| `.get_hierarchy_mapping()` | 获取 `{层级名: [特征名]}` 映射 |
+| `.compute_registered_features(df, features_df)` | 执行所有注册特征的计算 |
+| `.clear()` | 清空注册表（仅用于测试） |
+
+### 函数签名规范
+
+所有注册的特征函数必须遵循以下签名：
+
+```python
+def compute_xxx(df: pd.DataFrame, features_df: pd.DataFrame = None, **kwargs) -> pd.DataFrame:
+    """
+    参数:
+        df: 原始OHLCV数据
+        features_df: 已计算的特征矩阵（可用来引用 depends_on 中声明的依赖）
+    返回:
+        pd.DataFrame，列名即为新增特征名
+    """
+```
 
 ---
 

@@ -23,6 +23,8 @@ Feature registry for automatic feature discovery and extensibility.
 import logging
 from typing import Callable, Dict, List, Optional
 
+import pandas as pd                                           # [新增]
+
 logger = logging.getLogger(__name__)
 
 
@@ -173,7 +175,6 @@ class FeatureRegistry:                                        # [新增]
         pd.DataFrame
             所有自定义特征合并后的 DataFrame（可能为空）。
         """                                                   # [新增]
-        import pandas as pd                                   # [新增]
 
         frames = []                                           # [新增]
         for key, entry in self._entries.items():              # [新增]

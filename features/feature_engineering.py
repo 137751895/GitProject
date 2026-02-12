@@ -336,7 +336,7 @@ def compute_all_features(df, period="5min"):
     try:                                                      # [新增]
         importlib.import_module("features.custom_features")   # [新增]
     except ImportError:                                       # [新增]
-        pass                                                  # [新增]
+        pass  # custom_features.py 不存在时静默跳过（可选文件）  # [新增]
     registry = FeatureRegistry()                              # [新增]
     if registry.get_all_entries():                            # [新增]
         custom = registry.compute_registered_features(df, features)  # [新增]
