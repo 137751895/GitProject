@@ -223,6 +223,7 @@ class LSTMModel:
             "epochs": 50,
             "batch_size": 32,
             "learning_rate": 0.001,
+            "patience": 10,  # [新增]
         }
         if params:
             default_params.update(params)
@@ -297,11 +298,23 @@ class LSTMModel:
             "verbose": 0,
         }
 
+        callbacks = []  # [新增]
+
         if X_val is not None and y_val is not None:
             X_val_scaled = self.scaler.transform(X_val)
             X_val_seq, y_val_seq = self._create_sequences(X_val_scaled, y_val.values if hasattr(y_val, "values") else y_val)
             if len(X_val_seq) > 0:
                 fit_params["validation_data"] = (X_val_seq, y_val_seq)
+
+                from tensorflow.keras.callbacks import EarlyStopping  # [新增]
+                callbacks.append(  # [新增]
+                    EarlyStopping(  # [新增]
+                        monitor="val_loss",  # [新增]
+                        patience=int(self.params.get("patience", 10)),  # [新增]
+                        restore_best_weights=True,  # [新增]
+                    )  # [新增]
+                )  # [新增]
+                fit_params["callbacks"] = callbacks  # [新增]
 
         self.model.fit(X_seq, y_seq, **fit_params)
         return self

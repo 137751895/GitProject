@@ -28,7 +28,8 @@ from backtest.feature_selector import FeatureSelector, get_recommended_feature_g
 from config import (ML_FRAMEWORKS, PREDICTION_TARGETS, BACKTEST_CONFIG,
                     ENSEMBLE_CONFIG, POSITION_CONFIG, ADAPTIVE_CONFIG,
                     MULTI_TIMEFRAME_CONFIG, LSTM_FEATURE_SELECTION_CONFIG,
-                    SMART_LABEL_CONFIG, HYBRID_SYSTEM_CONFIG)
+                    SMART_LABEL_CONFIG, HYBRID_SYSTEM_CONFIG,
+                    COST_CONFIG, VAR_CONFIG)  # [新增]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -207,8 +208,19 @@ def train_and_evaluate(X, y, period="5min", task="classification"):
                 drawdown_warning=POSITION_CONFIG.get("drawdown_warning", 0.08),
                 max_daily_loss=POSITION_CONFIG.get("max_daily_loss", 0.03),
                 max_daily_trades=POSITION_CONFIG.get("max_daily_trades", 20),
+                max_position_usage=POSITION_CONFIG.get("max_position_usage", 0.9),  # [新增]
             )
             signals = risk_mgr.compute_signals(probas, test_volatility)
+
+            from models.var_stress import RiskModels  # [新增]
+            var_model = RiskModels()  # [新增]
+            ret_1d = pd.Series(X_test["close"].values).pct_change().dropna().tolist() if "close" in X_test.columns else pd.Series(probas).diff().fillna(0.0).tolist()  # [新增]
+            var_results = var_model.calculate_comprehensive_var(ret_1d, confidence_levels=[0.95, 0.99], portfolio_value=1.0)  # [新增]
+            if len(var_results) > 0:  # [新增]
+                var99 = float([r for r in var_results if r.confidence_level == 0.99][0].var_value)  # [新增]
+                if var99 > VAR_CONFIG.get("var99_gate", 0.02):  # [新增]
+                    signals["position_size"] = signals["position_size"] * VAR_CONFIG.get("position_scale_on_breach", 0.5)  # [新增]
+
             n_trades = np.sum(signals["signal"] != 0)
             logger.info(f"仓位管理: 测试集产生 {n_trades} 个交易信号")
             logger.info(f"  回撤保护乘数: {signals['drawdown_multiplier']:.2f}")
@@ -218,6 +230,8 @@ def train_and_evaluate(X, y, period="5min", task="classification"):
             if np.sum(trade_mask) > 0:
                 # 模拟收益: 将二分类标签(0/1)映射为方向(-1/+1)，乘以模拟单笔收益0.1%
                 actual_returns = (y_test.values[trade_mask] * 2 - 1) * 0.001
+                per_trade_cost = COST_CONFIG.get("buy_rate", 0.0003)  # [新增]
+                actual_returns = actual_returns - per_trade_cost  # [新增]
                 perf = compute_performance_metrics(actual_returns)
                 logger.info(f"  模拟绩效: 胜率={perf['win_rate']:.2%}, "
                             f"盈亏比={perf['profit_factor']:.2f}, "

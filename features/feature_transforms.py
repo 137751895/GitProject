@@ -18,6 +18,12 @@ import pandas as pd
 from features.rolling_numba import rolling_mean, rolling_std, rsi as nb_rsi
 
 
+# --- 改进点 2.4: 深度变换 pct_change()*100 ---
+
+def pct_change_100(series: pd.Series) -> pd.Series:  # [新增]
+    return series.pct_change() * 100.0  # [新增]
+
+
 def compute_nonlinear_transforms(df, features=None):
     """
     对关键特征进行非线性变换。

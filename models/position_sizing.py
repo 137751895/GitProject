@@ -365,7 +365,7 @@ class RiskBudgetManager:
     def __init__(self, account_risk=0.02, max_position=1.0,
                  base_threshold=0.55,
                  max_drawdown=0.15, drawdown_warning=0.08,
-                 max_daily_loss=0.03, max_daily_trades=20):
+                 max_daily_loss=0.03, max_daily_trades=20, max_position_usage=0.9):  # [新增]
         """
         Parameters
         ----------
@@ -387,6 +387,9 @@ class RiskBudgetManager:
         self.account_risk = account_risk
         self.max_position = max_position
         self.base_threshold = base_threshold
+        self.max_position_usage = float(max_position_usage)  # [新增]
+        if not 0 < self.max_position_usage <= 1:  # [新增]
+            self.max_position_usage = 0.9  # [新增]
         self.drawdown_tracker = DrawdownTracker(
             max_drawdown=max_drawdown,
             warning_level=drawdown_warning,
@@ -436,6 +439,8 @@ class RiskBudgetManager:
         # 回撤保护缩减
         dd_multiplier = self.drawdown_tracker.position_multiplier
         position = position * dd_multiplier
+
+        position = position * self.max_position_usage  # [新增]
 
         return {
             "position_size": position,

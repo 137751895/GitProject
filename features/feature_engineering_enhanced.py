@@ -80,6 +80,29 @@ def compute_microstructure_features(df):
     vol_sd = rolling_std(volume, 20)
     result["vol_zscore"] = (volume - vol_ma) / (vol_sd + 1e-12)
 
+    if "amount" in df.columns and "vol" in df.columns:  # [新增]
+        amount = df["amount"].values.astype(np.float64)  # [新增]
+        vol = df["vol"].values.astype(np.float64)  # [新增]
+        vwap_amount = (amount * 1000.0) / (vol * 100.0 + 1.0)  # [新增]
+        result["vwap_amount"] = vwap_amount  # [新增]
+        result["vwap_amount_dev"] = (close - vwap_amount) / (vwap_amount + 1e-12)  # [新增]
+
+    required = {"best_bid", "best_ask", "buy_depth", "sell_depth"}  # [新增]
+    if required.issubset(set(df.columns)):  # [新增]
+        best_bid = df["best_bid"].values.astype(np.float64)  # [新增]
+        best_ask = df["best_ask"].values.astype(np.float64)  # [新增]
+        buy_depth = df["buy_depth"].values.astype(np.float64)  # [新增]
+        sell_depth = df["sell_depth"].values.astype(np.float64)  # [新增]
+        mid = (best_bid + best_ask) / 2.0  # [新增]
+        micro_num = best_ask * buy_depth + best_bid * sell_depth  # [新增]
+        micro_den = buy_depth + sell_depth  # [新增]
+        microprice = micro_num / (micro_den + 1e-12)  # [新增]
+        result["micro_bias"] = (microprice - mid) / (mid + 1e-12)  # [新增]
+        ofi_raw = np.diff(buy_depth, prepend=np.nan) - np.diff(sell_depth, prepend=np.nan)  # [新增]
+        ofi_raw = np.nan_to_num(ofi_raw, nan=0.0)  # [新增]
+        result["ofi_raw"] = ofi_raw  # [新增]
+        result["ofi_ema"] = pd.Series(ofi_raw, index=df.index).ewm(span=8, adjust=False).mean().values  # [新增]
+
     return pd.DataFrame(result, index=df.index)
 
 
@@ -97,9 +120,15 @@ def compute_advanced_volatility_features(df):
     pd.DataFrame
         高级波动率特征
     """
-    close = df["close"].values.astype(np.float64)
-    high = df["high"].values.astype(np.float64)
-    low = df["low"].values.astype(np.float64)
+    from features.feature_context import FeatureContext  # [新增]
+
+    ctx = FeatureContext(df)  # [新增]
+    close = ctx.close  # [新增]
+    high = ctx.high  # [新增]
+    low = ctx.low  # [新增]
+    prev_close = ctx.prev_close  # [新增]
+    tr = ctx.tr  # [新增]
+    atr_14 = ctx.atr_14  # [新增]
 
     result = {}
 
@@ -112,13 +141,6 @@ def compute_advanced_volatility_features(df):
     result["volatility_regime"] = rolling_std(ret, 20)
 
     # 2. vol_ratio: ATR14 / ATR14的20周期均值
-    prev_close = np.roll(close, 1)
-    prev_close[0] = np.nan
-    tr = np.maximum(high - low, np.maximum(
-        np.abs(high - prev_close), np.abs(low - prev_close)
-    ))
-    tr = np.nan_to_num(tr, nan=0.0)
-    atr_14 = rolling_mean(tr, 14)
     atr_14_filled = np.nan_to_num(atr_14, nan=0.0)
     result["vol_ratio"] = atr_14 / (rolling_mean(atr_14_filled, 20) + 1e-12)
 
@@ -127,6 +149,10 @@ def compute_advanced_volatility_features(df):
 
     # 4. range_pct: 振幅百分比
     result["range_pct"] = (high - low) / (close + 1e-12)
+
+    result["trange"] = tr  # [新增]
+    result["natr_14"] = atr_14 / (close + 1e-12)  # [新增]
+    result["trange_pct"] = tr / (close + 1e-12)  # [新增]
 
     return pd.DataFrame(result, index=df.index)
 

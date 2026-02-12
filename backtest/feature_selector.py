@@ -494,6 +494,40 @@ class FeatureSelector:
         self.results["best_features"] = result
         return result
 
+    def extra_trees_importance_stability(self, X, y, n_estimators: int = 200, top_n: int = 50):  # [新增]
+        from sklearn.ensemble import ExtraTreesClassifier  # [新增]
+        import numpy as np  # [新增]
+        import pandas as pd  # [新增]
+
+        forest = ExtraTreesClassifier(n_estimators=int(n_estimators), random_state=0)  # [新增]
+        forest.fit(X, y)  # [新增]
+        importances = forest.feature_importances_  # [新增]
+        std = np.std([tree.feature_importances_ for tree in forest.estimators_], axis=0)  # [新增]
+
+        df = pd.DataFrame({  # [新增]
+            "feature": list(X.columns),  # [新增]
+            "importance": importances,  # [新增]
+            "std": std,  # [新增]
+        }).sort_values("importance", ascending=False)  # [新增]
+
+        df["stability_score"] = df["importance"] / (df["std"] + 1e-12)  # [新增]
+        df = df.sort_values("stability_score", ascending=False).head(int(top_n))  # [新增]
+
+        self.results["extra_trees_importance_stability"] = df  # [新增]
+        return df  # [新增]
+
+    def random_forest_importance(self, X, y, n_estimators: int = 300, top_n: int = 50):  # [新增]
+        from sklearn.ensemble import RandomForestClassifier  # [新增]
+        import pandas as pd  # [新增]
+
+        rf = RandomForestClassifier(random_state=0, n_estimators=int(n_estimators))  # [新增]
+        rf.fit(X, y)  # [新增]
+        imp = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False)  # [新增]
+        result = imp.head(int(top_n))  # [新增]
+
+        self.results["random_forest_importance"] = result  # [新增]
+        return result  # [新增]
+
 
 def get_recommended_feature_groups():
     """

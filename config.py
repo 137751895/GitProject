@@ -56,6 +56,7 @@ LSTM_CONFIG = {
     "epochs": 50,
     "batch_size": 32,
     "learning_rate": 0.001,
+    "patience": 10,  # [新增] (3.2)
 }
 
 # LightGBM配置
@@ -116,6 +117,7 @@ POSITION_CONFIG = {
     "drawdown_warning": 0.08,
     "max_daily_loss": 0.03,
     "max_daily_trades": 20,
+    "max_position_usage": 0.9,  # [新增] (1.2)
 }
 
 # 实时自适应配置
@@ -300,3 +302,24 @@ HYBRID_SYSTEM_CONFIG = {
     "target_win_loss_ratio": 2.0,   # Kelly公式目标盈亏比
     "batch_window": 100,            # 批量预测滚动窗口
 }
+
+# 交易成本配置（改进点 1.1）
+COST_CONFIG = {  # [新增] (1.1)
+    "buy_rate": 0.0003,  # [新增] (1.1)
+    "buy_min": 5.0,  # [新增] (1.1)
+    "sell_rate": 0.0003,  # [新增] (1.1)
+    "sell_min": 5.0,  # [新增] (1.1)
+    "stamp_duty": 0.001,  # [新增] (1.1)
+}  # [新增] (1.1)
+
+# 止盈止损配置（改进点 1.1）
+STOP_CONFIG = {  # [新增] (1.1)
+    "stop_loss_rate": -0.03,  # [新增] (1.1)
+    "stop_profit_rate": 0.05,  # [新增] (1.1)
+}  # [新增] (1.1)
+
+# VaR 门控配置（改进点 1.3）
+VAR_CONFIG = {  # [新增] (1.3)
+    "var99_gate": 0.02,  # [新增] (1.3)
+    "position_scale_on_breach": 0.5,  # [新增] (1.3)
+}  # [新增] (1.3)
