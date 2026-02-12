@@ -8,3 +8,8 @@ build/
 *.egg
 .env
 .venv/
+data/
+logs/
+*.pkl
+*.h5
+*.joblib
