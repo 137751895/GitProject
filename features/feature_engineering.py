@@ -330,6 +330,19 @@ def compute_all_features(df, period="5min"):
     deep_features = compute_all_transforms(features, raw_df=df)
     features = pd.concat([features, deep_features], axis=1)
 
+    # 注册表自定义特征（自动发现通过 @register_feature 装饰器注册的特征）  # [新增]
+    from features.feature_registry import FeatureRegistry     # [新增]
+    import importlib                                          # [新增]
+    try:                                                      # [新增]
+        importlib.import_module("features.custom_features")   # [新增]
+    except ImportError:                                       # [新增]
+        pass                                                  # [新增]
+    registry = FeatureRegistry()                              # [新增]
+    if registry.get_all_entries():                            # [新增]
+        custom = registry.compute_registered_features(df, features)  # [新增]
+        if len(custom.columns) > 0:                           # [新增]
+            features = pd.concat([features, custom], axis=1)  # [新增]
+
     return features
 
 
@@ -355,15 +368,31 @@ def get_feature_hierarchy(features_df=None):
         分层特征字典，每层包含 description 和 features 列表
     """
     from config import FEATURE_HIERARCHY
+    from features.feature_registry import FeatureRegistry     # [新增]
+
+    # 合并静态配置与注册表中的动态特征                        # [新增]
+    registry = FeatureRegistry()                              # [新增]
+    hierarchy_ext = registry.get_hierarchy_mapping()           # [新增]
 
     if features_df is None:
-        return FEATURE_HIERARCHY
+        # 无筛选：返回静态配置 + 注册表扩展                    # [新增]
+        result = {}                                           # [新增]
+        for level, info in FEATURE_HIERARCHY.items():         # [新增]
+            combined = list(info["features"])                  # [新增]
+            combined.extend(hierarchy_ext.get(level, []))     # [新增]
+            result[level] = {                                 # [新增]
+                "description": info["description"],           # [新增]
+                "features": combined,                         # [新增]
+            }                                                 # [新增]
+        return result                                         # [新增]
 
     # 只保留实际存在于 features_df 中的特征
     available = set(features_df.columns)
     result = {}
     for level, info in FEATURE_HIERARCHY.items():
-        matched = [f for f in info["features"] if f in available]
+        combined = list(info["features"])                     # [新增]
+        combined.extend(hierarchy_ext.get(level, []))         # [新增]
+        matched = [f for f in combined if f in available]     # [新增]
         result[level] = {
             "description": info["description"],
             "features": matched,

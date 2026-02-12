@@ -540,12 +540,15 @@ def get_recommended_feature_groups():
     """
     获取推荐的特征分组。
 
+    静态定义的分组会自动与 ``FeatureRegistry`` 中通过装饰器注册的
+    自定义特征合并——注册特征的 ``group`` 参数即对应此处的分组键。
+
     Returns
     -------
     dict
         推荐的特征分组字典
     """
-    return {
+    groups = {
         "价格趋势": [
             "ma_5", "ma_10", "ma_20", "ma_60",
             "ema_5", "ema_10", "ema_20", "ema_60",
@@ -607,3 +610,11 @@ def get_recommended_feature_groups():
             "momentum_in_trend", "momentum_in_range",
         ],
     }
+
+    # 自动合并注册表中的自定义特征                            # [新增]
+    from features.feature_registry import FeatureRegistry     # [新增]
+    registry = FeatureRegistry()                              # [新增]
+    for grp, names in registry.get_group_mapping().items():   # [新增]
+        groups.setdefault(grp, []).extend(names)              # [新增]
+
+    return groups
