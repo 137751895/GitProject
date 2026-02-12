@@ -216,8 +216,10 @@ def train_and_evaluate(X, y, period="5min", task="classification"):
             var_model = RiskModels()  # [新增]
             if "close" in X_test.columns:  # [新增]
                 ret_1d = pd.Series(X_test["close"].values).pct_change().dropna().tolist()  # [新增]
+            elif "log_return" in X_test.columns:  # [BUGFIX] P0-6: use actual return feature as fallback
+                ret_1d = X_test["log_return"].dropna().tolist()  # [BUGFIX] P0-6
             else:  # [新增]
-                ret_1d = pd.Series(probas).diff().fillna(0.0).tolist()  # [新增]
+                ret_1d = (y_test.values * 2 - 1).astype(float).tolist()  # [BUGFIX] P0-6: use direction labels as proxy instead of probability diffs
             var_results = var_model.calculate_comprehensive_var(ret_1d, confidence_levels=[0.95, 0.99], portfolio_value=1.0)  # [新增]
             var99_list = [r for r in var_results if r.confidence_level == 0.99]  # [新增]
             if len(var99_list) > 0:  # [新增]

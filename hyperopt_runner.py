@@ -15,13 +15,13 @@ from sklearn.preprocessing import MinMaxScaler, Normalizer  # [新增]
 
 import lightgbm as lgb  # [新增]
 
-from ml_pipeline import generate_sample_data, prepare_data  # [新增]
 from models.ml_models import create_model  # [新增]
 
 
 # --- 改进点 3.1: Optuna 超参搜索 ---
 
 def run_optuna_for_hfml(period: str, target_name: str, n_trials: int = 50):  # [新增]
+    from ml_pipeline import generate_sample_data, prepare_data  # [新增]  # [BUGFIX] P1-2: lazy import to avoid circular dependency
     df = generate_sample_data(n_rows=8000, period=period)  # [新增]
     X, y = prepare_data(df, period=period, target_name=target_name)  # [新增]
 

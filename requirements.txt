@@ -8,5 +8,4 @@ tensorflow>=2.18.0
 numba>=0.56.0
 optuna>=4.3.0
 bayesian-optimization>=1.4.3
-cached-property>=1.5.2
 scipy>=1.10.0

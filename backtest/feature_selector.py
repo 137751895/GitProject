@@ -494,12 +494,15 @@ class FeatureSelector:
         self.results["best_features"] = result
         return result
 
-    def extra_trees_importance_stability(self, X, y, n_estimators: int = 200, top_n: int = 50):  # [新增]
-        from sklearn.ensemble import ExtraTreesClassifier  # [新增]
+    def extra_trees_importance_stability(self, X, y, n_estimators: int = 200, top_n: int = 50, task: str = "classification"):  # [新增]  # [BUGFIX] P1-5: respect task
+        if task == "classification":  # [BUGFIX] P1-5
+            from sklearn.ensemble import ExtraTreesClassifier  # [新增]
+            forest = ExtraTreesClassifier(n_estimators=int(n_estimators), random_state=0)  # [新增]
+        else:  # [BUGFIX] P1-5
+            from sklearn.ensemble import ExtraTreesRegressor  # [BUGFIX] P1-5
+            forest = ExtraTreesRegressor(n_estimators=int(n_estimators), random_state=0)  # [BUGFIX] P1-5
         import numpy as np  # [新增]
         import pandas as pd  # [新增]
-
-        forest = ExtraTreesClassifier(n_estimators=int(n_estimators), random_state=0)  # [新增]
         forest.fit(X, y)  # [新增]
         importances = forest.feature_importances_  # [新增]
         std = np.std([tree.feature_importances_ for tree in forest.estimators_], axis=0)  # [新增]
@@ -516,11 +519,15 @@ class FeatureSelector:
         self.results["extra_trees_importance_stability"] = df  # [新增]
         return df  # [新增]
 
-    def random_forest_importance(self, X, y, n_estimators: int = 300, top_n: int = 50):  # [新增]
-        from sklearn.ensemble import RandomForestClassifier  # [新增]
+    def random_forest_importance(self, X, y, n_estimators: int = 300, top_n: int = 50, task: str = "classification"):  # [新增]  # [BUGFIX] P1-5: respect task
         import pandas as pd  # [新增]
 
-        rf = RandomForestClassifier(random_state=0, n_estimators=int(n_estimators))  # [新增]
+        if task == "classification":  # [BUGFIX] P1-5
+            from sklearn.ensemble import RandomForestClassifier  # [新增]
+            rf = RandomForestClassifier(random_state=0, n_estimators=int(n_estimators))  # [新增]
+        else:  # [BUGFIX] P1-5
+            from sklearn.ensemble import RandomForestRegressor  # [BUGFIX] P1-5
+            rf = RandomForestRegressor(random_state=0, n_estimators=int(n_estimators))  # [BUGFIX] P1-5
         rf.fit(X, y)  # [新增]
         imp = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False)  # [新增]
         result = imp.head(int(top_n))  # [新增]

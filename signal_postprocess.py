@@ -12,6 +12,6 @@ import pandas as pd  # [新增]
 
 def apply_topn_by_date_rank(preds: pd.DataFrame, topn: int = 10) -> pd.DataFrame:  # [新增]
     out = preds.copy()  # [新增]
-    out["rank"] = out.groupby("date")["pred"].rank()  # [新增]
+    out["rank"] = out.groupby("date")["pred"].rank(ascending=False, method="first")  # [新增]  # [BUGFIX] P0-5: rank descending to select top predictions; method="first" for deterministic tie-breaking
     out["signal"] = (out["rank"] <= float(topn)).astype(int)  # [新增]
     return out  # [新增]

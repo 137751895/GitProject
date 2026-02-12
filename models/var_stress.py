@@ -86,7 +86,7 @@ class RiskModels:  # [新增]
         try:  # [新增]
             returns_array = np.array(returns)  # [新增]
             mean_return = np.mean(returns_array)  # [新增]
-            std_return = np.std(returns_array)  # [新增]
+            std_return = np.std(returns_array, ddof=1)  # [新增]  # [BUGFIX] P2-3: sample std
 
             z_score = stats.norm.ppf(1 - confidence_level)  # [新增]
             var_value = (mean_return + z_score * std_return) * portfolio_value  # [新增]
@@ -107,7 +107,8 @@ class RiskModels:  # [新增]
             return None  # [新增]
 
     def calculate_monte_carlo_var(self, returns: List[float], confidence_level: float = 0.95,
-                                 portfolio_value: float = 1000000, simulations: int = 10000) -> Optional[VaRResult]:  # [新增]
+                                 portfolio_value: float = 1000000, simulations: int = 10000,
+                                 random_state: int = 42) -> Optional[VaRResult]:  # [新增]  # [BUGFIX] P0-3: accept seed
         if len(returns) < 30:  # [新增]
             self.logger.warning("Insufficient data for Monte Carlo VaR calculation")  # [新增]
             return None  # [新增]
@@ -115,9 +116,10 @@ class RiskModels:  # [新增]
         try:  # [新增]
             returns_array = np.array(returns)  # [新增]
             mean_return = np.mean(returns_array)  # [新增]
-            std_return = np.std(returns_array)  # [新增]
+            std_return = np.std(returns_array, ddof=1)  # [新增]  # [BUGFIX] P2-3: sample std
 
-            simulated_returns = np.random.normal(mean_return, std_return, simulations)  # [新增]
+            rng = np.random.RandomState(random_state)  # [新增]  # [BUGFIX] P0-3: reproducible
+            simulated_returns = rng.normal(mean_return, std_return, simulations)  # [新增]  # [BUGFIX] P0-3
             var_percentile = (1 - confidence_level) * 100  # [新增]
             var_value = np.percentile(simulated_returns, var_percentile) * portfolio_value  # [新增]
 
@@ -212,7 +214,8 @@ class RiskModels:  # [新增]
                 stressed_return *= scenario_params['volatility_multiplier']  # [新增]
 
             if 'correlation_breakdown' in scenario_params and scenario_params['correlation_breakdown']:  # [新增]
-                stressed_return += np.random.normal(0, abs(stressed_return) * 0.5)  # [新增]
+                rng = np.random.RandomState(42)  # [BUGFIX] P1-3: deterministic stress test
+                stressed_return += rng.normal(0, abs(stressed_return) * 0.5)  # [新增]  # [BUGFIX] P1-3
 
             stressed_returns.append(stressed_return)  # [新增]
 
@@ -225,14 +228,17 @@ class RiskModels:  # [新增]
         try:  # [新增]
             returns_array = np.array(returns)  # [新增]
             std_val = float(np.std(returns_array))  # [新增]
+            var_95_threshold = float(np.percentile(returns_array, 5))  # [新增]  # [BUGFIX] P0-1
+            tail = returns_array[returns_array <= var_95_threshold]  # [新增]  # [BUGFIX] P0-1
+            es_95 = float(np.mean(tail)) if len(tail) > 0 else var_95_threshold  # [新增]  # [BUGFIX] P0-1
             metrics = {  # [新增]
                 'volatility': std_val,  # [新增]
                 'sharpe_ratio': float(np.mean(returns_array) / std_val) if std_val > 0 else 0.0,  # [新增]
                 'max_drawdown': float(self._calculate_max_drawdown(returns_array)),  # [新增]
                 'skewness': float(stats.skew(returns_array)),  # [新增]
                 'kurtosis': float(stats.kurtosis(returns_array)),  # [新增]
-                'value_at_risk_95': float(np.percentile(returns_array, 5)),  # [新增]
-                'expected_shortfall_95': float(np.mean(returns_array[returns_array <= np.percentile(returns_array, 5)])),  # [新增]
+                'value_at_risk_95': var_95_threshold,  # [新增]  # [BUGFIX] P0-1
+                'expected_shortfall_95': es_95,  # [新增]  # [BUGFIX] P0-1
             }  # [新增]
 
             return metrics  # [新增]
@@ -243,9 +249,11 @@ class RiskModels:  # [新增]
 
     def _calculate_tail_risk(self, returns: List[float]) -> float:  # [新增]
         returns_array = np.array(returns)  # [新增]
+        if len(returns_array) < 2:  # [BUGFIX] P0-2: guard empty/tiny arrays
+            return 0.0  # [BUGFIX] P0-2
         var_95 = np.percentile(returns_array, 5)  # [新增]
         tail_returns = returns_array[returns_array <= var_95]  # [新增]
-        if len(tail_returns) > 0:  # [新增]
+        if len(tail_returns) > 1:  # [新增]  # [BUGFIX] P0-2: need >1 for std
             return float(np.std(tail_returns))  # [新增]
         return 0.0  # [新增]
 

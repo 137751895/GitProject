@@ -7,7 +7,7 @@
 Feature context with cached_property to deduplicate intermediate computations.
 """
 
-from cached_property import cached_property  # [新增]
+from functools import cached_property  # [新增]  # [BUGFIX] P1-1: use stdlib cached_property (Python 3.8+)
 
 import numpy as np  # [新增]
 import pandas as pd  # [新增]

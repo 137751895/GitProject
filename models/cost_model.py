@@ -10,6 +10,7 @@ Cost model and stop-loss/take-profit rules.
 from __future__ import annotations  # [新增]
 
 from dataclasses import dataclass  # [新增]
+from typing import Tuple  # [BUGFIX] P2-1: import Tuple for <3.9 compat
 
 
 @dataclass(frozen=True)  # [新增]
@@ -34,7 +35,7 @@ def calc_buy_cost(trade_value: float, cfg: CostConfig) -> float:  # [新增]
     return float(service_change)  # [新增]
 
 
-def calc_sell_cash_in(trade_value: float, cfg: CostConfig) -> tuple[float, float, float]:  # [新增]
+def calc_sell_cash_in(trade_value: float, cfg: CostConfig) -> Tuple[float, float, float]:  # [新增]  # [BUGFIX] P2-1: Tuple from typing
     service_change = trade_value * cfg.sell_rate  # [新增]
     if service_change < cfg.sell_min:  # [新增]
         service_change = cfg.sell_min  # [新增]
@@ -44,7 +45,7 @@ def calc_sell_cash_in(trade_value: float, cfg: CostConfig) -> tuple[float, float
     return float(cash_in), float(total_cost), float(stamp_duty)  # [新增]
 
 
-def should_stop(entry_price: float, current_price: float, side: int, cfg: StopConfig) -> tuple[bool, float]:  # [新增]
+def should_stop(entry_price: float, current_price: float, side: int, cfg: StopConfig) -> Tuple[bool, float]:  # [新增]  # [BUGFIX] P2-1
     if entry_price <= 0:  # [新增]
         return False, 0.0  # [新增]
     raw_ret = (current_price - entry_price) / entry_price  # [新增]

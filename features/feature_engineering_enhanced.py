@@ -83,7 +83,9 @@ def compute_microstructure_features(df):
     if "amount" in df.columns and "vol" in df.columns:  # [新增]
         amount = df["amount"].values.astype(np.float64)  # [新增]
         vol = df["vol"].values.astype(np.float64)  # [新增]
-        vwap_amount = (amount * 1000.0) / (vol * 100.0 + 1.0)  # [新增]
+        # [BUGFIX] P1-4: document unit conversion constants
+        # amount is in 元, vol is in 手; 1手=100股, amount单位千元→元需×1000
+        vwap_amount = (amount * 1000.0) / (vol * 100.0 + 1e-12)  # [新增]  # [BUGFIX] P1-4: use epsilon instead of +1.0
         result["vwap_amount"] = vwap_amount  # [新增]
         result["vwap_amount_dev"] = (close - vwap_amount) / (vwap_amount + 1e-12)  # [新增]
 

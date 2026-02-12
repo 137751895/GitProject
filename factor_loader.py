@@ -36,10 +36,10 @@ def load_factors(index_pkl_path: str, factors_dir: str, factor_list: list, start
         if os.path.isfile(factor_file):  # [新增]
             factor_data = pd.read_pickle(factor_file)  # [新增]
             factor_data[factor] = pd.to_numeric(factor_data[factor], errors="coerce")  # [新增]
-            factor_data = factor_data.iloc[start_index:end_index + 1]  # [新增]
+            factor_data = factor_data.loc[start_index:end_index]  # [新增]  # [BUGFIX] P0-4: use .loc for label-based slicing
             factor_dfs.append(factor_data)  # [新增]
 
-    combined_factors_df = pd.concat(factor_dfs, axis=1)  # [新增]
+    combined_factors_df = pd.concat(factor_dfs, axis=1) if factor_dfs else pd.DataFrame(index=index_df.index)  # [新增]  # [BUGFIX] P0-4: handle empty list
     df_factor = index_df.join(combined_factors_df, how="left")  # [新增]
     df_factor = df_factor.set_index(["ts_code", "trade_date"]).sort_index()  # [新增]
     return df_factor  # [新增]
