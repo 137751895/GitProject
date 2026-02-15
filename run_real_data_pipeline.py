@@ -250,6 +250,9 @@ def step_train_model(X, y, period, task, selected_features, logger):
     logger.info(f"  周期: {period}, 框架: {ML_FRAMEWORKS[period]}")
     logger.info("=" * 60)
 
+    if period == "15min" and (selected_features is None or len(selected_features) == 0):
+        raise ValueError("15min 周期必须使用 XGBoost 预筛选特征后再进行 LSTM 训练")
+
     if selected_features is not None:
         X_use = X[selected_features]
         logger.info(f"  使用筛选后的 {len(selected_features)} 个特征")
@@ -283,6 +286,18 @@ def step_backtest(X_use, y, model, period, task, metrics, is_real, logger):
 
     # Predictions
     y_pred = model.predict(X_test)
+    pred_len = len(y_pred)
+    if pred_len != len(y_test):
+        if pred_len <= 0:
+            logger.warning("  预测结果为空，回测阶段跳过交易绩效计算")
+            return metrics.get("test", {}), {}
+        if pred_len < len(y_test):
+            y_test = y_test.iloc[-pred_len:]
+            X_test = X_test.iloc[-pred_len:]
+        else:
+            y_pred = y_pred[:len(y_test)]
+            pred_len = len(y_pred)
+        logger.info(f"  预测长度与测试集不一致，已对齐到 {pred_len} 条")
     test_metrics = metrics.get("test", {})
 
     # Performance metrics from simulated trades
@@ -357,6 +372,17 @@ def step_predict_and_save(X_use, y, model, period, task, selected_features,
     y_test = y.iloc[val_end:]
 
     y_pred = model.predict(X_test)
+    pred_len = len(y_pred)
+    if pred_len != len(y_test):
+        if pred_len <= 0:
+            raise ValueError("模型预测结果为空，无法保存预测输出")
+        if pred_len < len(y_test):
+            y_test = y_test.iloc[-pred_len:]
+            X_test = X_test.iloc[-pred_len:]
+        else:
+            y_pred = y_pred[:len(y_test)]
+            pred_len = len(y_pred)
+        logger.info(f"  预测长度与测试集不一致，已对齐到 {pred_len} 条")
 
     # Save predictions
     pred_df = pd.DataFrame({
@@ -467,6 +493,10 @@ def run_pipeline(period: str, target_name: str = "future_direction",
         return
 
     # Step 3: 特征筛选
+    if period == "15min" and skip_feature_selection:
+        logger.error("15min 周期禁止跳过特征筛选：必须执行 XGBoost 预筛选 -> LSTM 训练")
+        return
+
     selected_features = None
     xgb_selected = None
     if not skip_feature_selection:
@@ -475,6 +505,9 @@ def run_pipeline(period: str, target_name: str = "future_direction",
                 X, y, period, task, xgb_n_features, logger,
             )
         except Exception as e:
+            if period == "15min":
+                logger.error(f"15min 特征筛选失败: {e}；按策略要求终止，不允许回退")
+                return
             logger.warning(f"特征筛选出错: {e}，使用全部特征继续")
             selected_features = None
     else:
@@ -483,6 +516,10 @@ def run_pipeline(period: str, target_name: str = "future_direction",
     # For 15min, use XGBoost-selected features for LSTM
     if period == "15min" and xgb_selected is not None:
         selected_features = xgb_selected
+
+    if period == "15min" and (selected_features is None or len(selected_features) == 0):
+        logger.error("15min 周期未获得 XGBoost 预筛选特征，终止执行")
+        return
 
     # Step 4: 模型训练
     try:

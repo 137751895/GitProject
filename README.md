@@ -1524,3 +1524,196 @@ python ml_pipeline.py --multi-timeframe --n-rows 1000
 - **一致性0.698**: 三个周期之间的方向一致程度
 
 > **注意**：当前使用模拟随机数据，实际商品期货数据的预测效果会因市场行情不同而有差异。接入真实行情数据后需要重新训练和评估。
+
+---
+
+## 7天执行清单（每天命令 + 验收指标）
+
+适用目标：先跑通，再稳步提精度，最后做实盘前风控验证。  
+执行原则：每天只改一类变量（特征/阈值/模型其一），避免混改导致无法归因。
+
+### Day 1 — 跑通全链路并建立基线（5min）
+
+**目标**：拿到第一版可复现基线。  
+**命令**：
+
+```bash
+python run_real_data_pipeline.py --period 5min
+```
+
+**验收**：
+- 生成 `data/mx/feature_selection_report_5min.md`
+- 生成 `data/mx/backtest_report_5min.md`
+- 生成 `data/mx/predictions_5min.csv`
+- 记录基线指标：`accuracy`、`win_rate`、`profit_factor`、`sharpe_ratio`
+
+---
+
+### Day 2 — 数据质量与目标分布检查
+
+**目标**：确认样本分布可训练，避免“伪效果”。  
+**命令**（快速复跑并观察日志中的目标分布）：
+
+```bash
+python run_real_data_pipeline.py --period 5min --skip-feature-selection
+```
+
+**验收**：
+- `future_direction` 正负样本不过度失衡（经验上不建议超过 70:30）
+- 缺失值、无穷值处理后样本量无异常骤降
+- 将 Day1/Day2 指标写入同一对照表（CSV 或 Markdown）
+
+---
+
+### Day 3 — 特征筛选稳定化（5min）
+
+**目标**：减少噪声特征，提升稳健性。  
+**命令**：
+
+```bash
+python run_real_data_pipeline.py --period 5min
+```
+
+**验收**：
+- 对比 `feature_selection_report_5min.md`，确认 Top 特征与特征组排名
+- 重点关注稳定特征（非一次性“冲高”特征）
+- 若准确率变化不大但回测稳定性提升，也记为正向结果
+
+---
+
+### Day 4 — 15min特征预筛选 + LSTM收敛验证
+
+**目标**：验证中周期模型是否提供有效方向信息。  
+**命令**：
+
+```bash
+python run_real_data_pipeline.py --period 15min --xgb-n-features 0
+```
+
+**验收**：
+- 自动得到动态建议特征数（`xgb-n-features 0`）
+- 15min 报告中看到筛选后特征列表与组别贡献
+- 记录 15min 测试集 `accuracy/f1_score`，作为后续多周期方向过滤基线
+
+---
+
+### Day 5 — 小规模超参搜索（先5min）
+
+**目标**：在不大幅加复杂度前提下提升指标。  
+**命令**：
+
+```bash
+python run_real_data_pipeline.py --period 5min --n-trials 20
+```
+
+**验收**：
+- 与 Day1 基线比较：至少一个核心指标稳定提升（如 `accuracy` 或 `profit_factor`）
+- 若指标互相冲突（准确率升、收益降），优先看“净收益相关指标”
+- 保存本轮参数与结果（避免遗忘最优配置）
+
+---
+
+### Day 6 — 多时间框架协同验证（15m→5m→1m）
+
+**目标**：提高信号质量，减少低质量开仓。  
+**命令**：
+
+```bash
+python ml_pipeline.py --multi-timeframe --n-rows 1000
+```
+
+**验收**：
+- 输出 A/B/C 等级信号统计
+- A级信号样本虽少但质量应更高（重点看胜率和盈亏比）
+- 中性过滤机制有效（减少无把握交易）
+
+---
+
+### Day 7 — 风控联调与实盘前门控检查
+
+**目标**：将“可预测”转为“可交易”。  
+**命令**：
+
+```bash
+python run_real_data_pipeline.py --period 5min
+python run_real_data_pipeline.py --period 15min --xgb-n-features 25
+```
+
+**验收**：
+- 检查回撤保护、日内限额、阈值自适应是否触发并生效
+- 检查成本扣减后策略是否仍为正收益倾向
+- 检查 VaR 门控是否在高风险样本自动降仓
+
+---
+
+## 每天都要更新的最小结果表（建议）
+
+建议维护一张 `data/mx/experiment_log.csv`，字段如下：
+
+- `date`
+- `period`
+- `features_used`
+- `key_params`
+- `accuracy`
+- `f1_score`
+- `win_rate`
+- `profit_factor`
+- `max_drawdown`
+- `sharpe_ratio`
+- `notes`
+
+只要持续7天有结构化记录，后续优化效率会明显高于“凭感觉调参”。
+
+### 自动写入实验日志（推荐）
+
+跑完回测后可直接执行：
+
+```bash
+python scripts/update_experiment_log.py --period 5min --features-used all_features --key-params "n_trials=20; feature_selection=on" --notes "day5 tuning"
+```
+
+说明：
+- 默认读取 `data/mx/backtest_report_{period}.md`
+- 自动提取 `accuracy/f1_score/win_rate/profit_factor/max_drawdown/sharpe_ratio`
+- 自动写入（同日期+同周期会更新，不重复插入）`data/mx/experiment_log.csv`
+- 可加 `--run-pipeline` 先执行流水线再写入日志
+
+一键（先跑再记）单周期：
+
+```bash
+python scripts/update_experiment_log.py --period 5min --run-pipeline --pipeline-extra-args "--n-trials 20" --features-used all_features --key-params "n_trials=20" --notes "daily auto run"
+```
+
+批量写入三个周期：
+
+```bash
+python scripts/update_experiment_log.py --periods 1min,5min,15min --features-used all_features --key-params "daily_batch" --notes "batch update"
+```
+
+一键（先跑再记）批量三周期：
+
+```bash
+python scripts/update_experiment_log.py --periods 1min,5min,15min --run-pipeline --features-used all_features --key-params "daily_batch" --notes "batch auto run"
+```
+
+严格模式（任一周期失败立即退出，适合CI/计划任务）：
+
+```bash
+python scripts/update_experiment_log.py --periods 1min,5min,15min --run-pipeline --strict --features-used all_features --key-params "daily_batch" --notes "batch strict"
+```
+
+### Windows 任务计划器（PowerShell日更脚本）
+
+手动执行（先跑流水线、再更新日志、日志落盘到 `logs/`）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\daily_batch_update.ps1 -Workspace . -Periods "1min,5min,15min" -Strict
+```
+
+创建每天 21:35 自动任务（示例）：
+
+```powershell
+schtasks /Create /TN "HFML_DailyBatch" /SC DAILY /ST 21:35 /TR "powershell -ExecutionPolicy Bypass -File e:\Cursor\hfml\scripts\daily_batch_update.ps1 -Workspace e:\Cursor\hfml -Periods 1min,5min,15min -Strict" /F
+```
+
+查看任务执行结果日志：`logs/daily_batch_update_*.log`
