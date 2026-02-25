@@ -1219,7 +1219,7 @@ class TestIntegration:
         )
 
     def test_registry_has_all(self):
-        """注册表应包含全部19+21个特征函数"""
+        """注册表应包含全部19+21+20个特征函数"""
         registry = FeatureRegistry()
         all_output_names = set()
         for entry in registry.get_all_entries().values():
@@ -1244,6 +1244,15 @@ class TestIntegration:
             "bid_ask_spread_proxy", "effective_spread_proxy", "price_reversal_metric",
             "volume_price_correlation", "open_interest_momentum", "long_short_ratio_proxy",
             "kurtosis_returns", "herfindahl_volume",
+            # 20个第三辑精选特征
+            "fractal_dimension", "lyapunov_exponent", "approximate_entropy",
+            "sample_entropy", "permutation_entropy", "skewness_3rd",
+            "co_skewness", "co_kurtosis", "market_microstructure_noise",
+            "price_delay", "volume_synchronized_returns", "tick_rule_imbalance",
+            "volume_weighted_price_range", "volatility_term_structure",
+            "volatility_convexity", "cross_asset_correlation",
+            "correlation_breakdown", "regime_switching_probability",
+            "hurst_exponent_refined", "detrended_fluctuation",
         }
         assert expected.issubset(all_output_names), (
             f"注册表缺失特征: {expected - all_output_names}"
@@ -1252,9 +1261,9 @@ class TestIntegration:
     def test_feature_count_increase(self):
         """新增特征应在 compute_all_features 输出中"""
         from features.feature_engineering import compute_all_features
-        df = _make_base_df(200)
+        df = _make_base_df(300)
         features_df = compute_all_features(df, period="5min")
-        # All 10 first-batch + 20+1 second-batch new features should be present
+        # All batches 1-3 features should be present
         new_features = [
             "buy_sell_pressure", "volatility_skew", "momentum_cross",
             "autocorrelation_1", "vwap_std", "tick_imbalance_proxy",
@@ -1268,9 +1277,260 @@ class TestIntegration:
             "bid_ask_spread_proxy", "effective_spread_proxy", "price_reversal_metric",
             "volume_price_correlation", "open_interest_momentum", "long_short_ratio_proxy",
             "kurtosis_returns", "herfindahl_volume",
+            # Batch 3
+            "fractal_dimension", "lyapunov_exponent", "approximate_entropy",
+            "sample_entropy", "permutation_entropy", "skewness_3rd",
+            "co_skewness", "co_kurtosis", "market_microstructure_noise",
+            "price_delay", "volume_synchronized_returns", "tick_rule_imbalance",
+            "volume_weighted_price_range", "volatility_term_structure",
+            "volatility_convexity", "cross_asset_correlation",
+            "correlation_breakdown", "regime_switching_probability",
+            "hurst_exponent_refined", "detrended_fluctuation",
         ]
         for feat in new_features:
             assert feat in features_df.columns, f"Missing: {feat}"
+
+
+# ============================================================
+# 第三辑特征测试（20个）
+# ============================================================
+
+
+class TestFractalDimension:
+    def test_basic(self):
+        from features.custom_features import compute_fractal_dimension
+        df = _make_base_df(200)
+        result = compute_fractal_dimension(df, window=50)
+        assert "fractal_dimension" in result.columns
+        assert result["fractal_dimension"].notna().sum() > 0
+
+    def test_trend_vs_random(self):
+        from features.custom_features import compute_fractal_dimension
+        trend = np.cumsum(np.ones(200) * 0.1) + 100
+        df_trend = pd.DataFrame({"close": trend, "open": trend, "high": trend + 1, "low": trend - 1, "volume": np.ones(200) * 1000, "open_interest": np.ones(200) * 5000})
+        result_trend = compute_fractal_dimension(df_trend, window=50)["fractal_dimension"]
+        np.random.seed(42)
+        random_walk = np.cumsum(np.random.randn(200) * 0.1) + 100
+        df_random = pd.DataFrame({"close": random_walk, "open": random_walk, "high": random_walk + 1, "low": random_walk - 1, "volume": np.ones(200) * 1000, "open_interest": np.ones(200) * 5000})
+        result_random = compute_fractal_dimension(df_random, window=50)["fractal_dimension"]
+        fd_trend = result_trend.dropna().iloc[-1] if not result_trend.dropna().empty else 1.0
+        fd_random = result_random.dropna().iloc[-1] if not result_random.dropna().empty else 1.5
+        assert fd_trend < fd_random
+
+
+class TestLyapunovExponent:
+    def test_basic(self):
+        from features.custom_features import compute_lyapunov_exponent
+        df = _make_base_df(300)
+        result = compute_lyapunov_exponent(df, window=100, tau=5)
+        assert "lyapunov_exponent" in result.columns
+        assert result["lyapunov_exponent"].notna().sum() > 0
+
+
+class TestApproximateEntropy:
+    def test_basic(self):
+        from features.custom_features import compute_approximate_entropy
+        df = _make_base_df(200)
+        result = compute_approximate_entropy(df, window=50)
+        assert "approximate_entropy" in result.columns
+        assert result["approximate_entropy"].notna().sum() > 0
+
+
+class TestSampleEntropy:
+    def test_basic(self):
+        from features.custom_features import compute_sample_entropy
+        df = _make_base_df(200)
+        result = compute_sample_entropy(df, window=50)
+        assert "sample_entropy" in result.columns
+        assert result["sample_entropy"].notna().sum() > 0
+
+
+class TestPermutationEntropy:
+    def test_basic(self):
+        from features.custom_features import compute_permutation_entropy
+        df = _make_base_df(200)
+        result = compute_permutation_entropy(df, window=50)
+        assert "permutation_entropy" in result.columns
+        assert result["permutation_entropy"].notna().sum() > 0
+
+
+class TestSkewness3rd:
+    def test_basic(self):
+        from features.custom_features import compute_skewness_3rd
+        df = _make_base_df(100)
+        result = compute_skewness_3rd(df, window=20)
+        assert "skewness_3rd" in result.columns
+        assert result["skewness_3rd"].notna().sum() > 0
+
+
+class TestCoSkewness:
+    def test_basic(self):
+        from features.custom_features import compute_co_skewness
+        df = _make_base_df(100)
+        result = compute_co_skewness(df, window=20)
+        assert "co_skewness" in result.columns
+        assert result["co_skewness"].notna().sum() > 0
+
+
+class TestCoKurtosis:
+    def test_basic(self):
+        from features.custom_features import compute_co_kurtosis
+        df = _make_base_df(100)
+        result = compute_co_kurtosis(df, window=20)
+        assert "co_kurtosis" in result.columns
+        assert result["co_kurtosis"].notna().sum() > 0
+
+
+class TestMarketMicrostructureNoise:
+    def test_basic(self):
+        from features.custom_features import compute_market_microstructure_noise
+        df = _make_base_df(100)
+        result = compute_market_microstructure_noise(df, window=20)
+        assert "market_microstructure_noise" in result.columns
+        assert result["market_microstructure_noise"].notna().sum() > 0
+
+
+class TestPriceDelay:
+    def test_basic(self):
+        from features.custom_features import compute_price_delay
+        df = _make_base_df(200)
+        result = compute_price_delay(df, window=50, max_lag=5)
+        assert "price_delay" in result.columns
+        assert result["price_delay"].notna().sum() > 0
+
+
+class TestVolumeSynchronizedReturns:
+    def test_basic(self):
+        from features.custom_features import compute_volume_synchronized_returns
+        df = _make_base_df(100)
+        result = compute_volume_synchronized_returns(df, window=20)
+        assert "volume_synchronized_returns" in result.columns
+        assert result["volume_synchronized_returns"].notna().sum() > 0
+
+
+class TestTickRuleImbalance:
+    def test_basic(self):
+        from features.custom_features import compute_tick_rule_imbalance
+        df = _make_base_df(100)
+        result = compute_tick_rule_imbalance(df, window=20)
+        assert "tick_rule_imbalance" in result.columns
+        vals = result["tick_rule_imbalance"].dropna()
+        assert len(vals) > 0
+        assert (vals >= -1.0).all() and (vals <= 1.0).all()
+
+
+class TestVolumeWeightedPriceRange:
+    def test_basic(self):
+        from features.custom_features import compute_volume_weighted_price_range
+        df = _make_base_df(100)
+        result = compute_volume_weighted_price_range(df, window=20)
+        assert "volume_weighted_price_range" in result.columns
+        assert result["volume_weighted_price_range"].notna().sum() > 0
+
+
+class TestVolatilityTermStructure:
+    def test_basic(self):
+        from features.custom_features import compute_volatility_term_structure
+        df = _make_base_df(200)
+        result = compute_volatility_term_structure(df)
+        assert "volatility_term_structure" in result.columns
+        assert result["volatility_term_structure"].notna().sum() > 0
+
+
+class TestVolatilityConvexity:
+    def test_basic(self):
+        from features.custom_features import compute_volatility_convexity
+        df = _make_base_df(200)
+        result = compute_volatility_convexity(df)
+        assert "volatility_convexity" in result.columns
+        assert result["volatility_convexity"].notna().sum() > 0
+
+
+class TestCrossAssetCorrelation:
+    def test_basic(self):
+        from features.custom_features import compute_cross_asset_correlation
+        df = _make_base_df(200)
+        result = compute_cross_asset_correlation(df, window=60)
+        assert "cross_asset_correlation" in result.columns
+        assert result["cross_asset_correlation"].notna().sum() > 0
+
+
+class TestCorrelationBreakdown:
+    def test_basic(self):
+        from features.custom_features import compute_correlation_breakdown
+        df = _make_base_df(200)
+        result = compute_correlation_breakdown(df, window=60)
+        assert "correlation_breakdown" in result.columns
+        assert result["correlation_breakdown"].notna().sum() > 0
+
+
+class TestRegimeSwitchingProbability:
+    def test_basic(self):
+        from features.custom_features import compute_regime_switching_probability
+        df = _make_base_df(200)
+        result = compute_regime_switching_probability(df, window=100)
+        assert "regime_switching_probability" in result.columns
+        vals = result["regime_switching_probability"].dropna()
+        assert len(vals) > 0
+        assert (vals >= 0).all() and (vals <= 1).all()
+
+
+class TestHurstExponentRefined:
+    def test_basic(self):
+        from features.custom_features import compute_hurst_exponent_refined
+        df = _make_base_df(300)
+        result = compute_hurst_exponent_refined(df, window=100)
+        assert "hurst_exponent_refined" in result.columns
+        assert result["hurst_exponent_refined"].notna().sum() > 0
+
+
+class TestDetrendedFluctuation:
+    def test_basic(self):
+        from features.custom_features import compute_detrended_fluctuation
+        df = _make_base_df(300)
+        result = compute_detrended_fluctuation(df, window=100)
+        assert "detrended_fluctuation" in result.columns
+        assert result["detrended_fluctuation"].notna().sum() > 0
+
+
+class TestBatch3Integration:
+    def test_all_20_registered(self):
+        from features.feature_registry import FeatureRegistry
+        import features.custom_features
+        registry = FeatureRegistry()
+        all_output_names = set()
+        for name, entry in registry.get_all_entries().items():
+            all_output_names.update(entry.output_names)
+        batch3 = {
+            "fractal_dimension", "lyapunov_exponent", "approximate_entropy",
+            "sample_entropy", "permutation_entropy", "skewness_3rd",
+            "co_skewness", "co_kurtosis", "market_microstructure_noise",
+            "price_delay", "volume_synchronized_returns", "tick_rule_imbalance",
+            "volume_weighted_price_range", "volatility_term_structure",
+            "volatility_convexity", "cross_asset_correlation",
+            "correlation_breakdown", "regime_switching_probability",
+            "hurst_exponent_refined", "detrended_fluctuation",
+        }
+        assert batch3.issubset(all_output_names), f"Missing: {batch3 - all_output_names}"
+
+    def test_compute_all_features_includes_batch3(self):
+        from features.feature_engineering import compute_all_features
+        df = _make_base_df(300)
+        features_df = compute_all_features(df, period="5min")
+        batch3 = [
+            "fractal_dimension", "lyapunov_exponent", "approximate_entropy",
+            "sample_entropy", "permutation_entropy", "skewness_3rd",
+            "co_skewness", "co_kurtosis", "market_microstructure_noise",
+            "price_delay", "volume_synchronized_returns", "tick_rule_imbalance",
+            "volume_weighted_price_range", "volatility_term_structure",
+            "volatility_convexity", "cross_asset_correlation",
+            "correlation_breakdown", "regime_switching_probability",
+            "hurst_exponent_refined", "detrended_fluctuation",
+        ]
+        for feat in batch3:
+            assert feat in features_df.columns, f"Missing from compute_all_features: {feat}"
+
+
 
 
 if __name__ == "__main__":
