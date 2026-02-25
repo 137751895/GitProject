@@ -13,3 +13,4 @@ logs/
 *.pkl
 *.h5
 *.joblib
+.pytest_cache/

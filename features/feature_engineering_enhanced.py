@@ -208,13 +208,70 @@ def compute_gap_decay_features(df):
     return pd.DataFrame({"gap_decay": gap_decay}, index=df.index)
 
 
-def _rolling_slope(y: np.ndarray, window: int) -> np.ndarray:
-    """
-    计算滚动线性回归斜率。
+try:                                                              # [新增]
+    from numba import njit as _njit                               # [新增]
+except ImportError:                                               # [新增]
+    def _njit(*args, **kwargs):                                   # [新增]
+        def deco(func):                                           # [新增]
+            return func                                           # [新增]
+        return deco                                               # [新增]
+
+
+@_njit(cache=True)                                                # [新增]
+def _rolling_slope_numba(arr, window):                            # [新增]
+    """Numba加速版本的滚动斜率计算。
 
     Parameters
     ----------
-    y : np.ndarray
+    arr : np.ndarray
+        输入数组 (float64)
+    window : int
+        窗口大小
+
+    Returns
+    -------
+    np.ndarray
+        滚动斜率
+    """                                                           # [新增]
+    n = len(arr)                                                  # [新增]
+    out = np.full(n, np.nan, dtype=np.float64)                    # [新增]
+    if window < 2:                                                # [新增]
+        return out                                                # [新增]
+                                                                  # [新增]
+    x = np.arange(window, dtype=np.float64)                       # [新增]
+    x_mean = (window - 1) / 2.0                                   # [新增]
+    var_x = 0.0                                                   # [新增]
+    for j in range(window):                                       # [新增]
+        var_x += (x[j] - x_mean) ** 2                             # [新增]
+    if abs(var_x) < 1e-12:                                        # [新增]
+        return out                                                # [新增]
+                                                                  # [新增]
+    for i in range(window - 1, n):                                # [新增]
+        y = arr[i - window + 1: i + 1]                            # [新增]
+        has_nan = False                                           # [新增]
+        for j in range(window):                                   # [新增]
+            if np.isnan(y[j]):                                    # [新增]
+                has_nan = True                                    # [新增]
+                break                                             # [新增]
+        if has_nan:                                               # [新增]
+            continue                                              # [新增]
+        y_mean = 0.0                                              # [新增]
+        for j in range(window):                                   # [新增]
+            y_mean += y[j]                                        # [新增]
+        y_mean /= window                                          # [新增]
+        cov = 0.0                                                 # [新增]
+        for j in range(window):                                   # [新增]
+            cov += (x[j] - x_mean) * (y[j] - y_mean)             # [新增]
+        out[i] = cov / var_x                                      # [新增]
+    return out                                                    # [新增]
+
+
+def _rolling_slope(y, window):                                    # [新增]
+    """计算滚动线性回归斜率（自动使用Numba加速）。
+
+    Parameters
+    ----------
+    y : array-like
         输入数组
     window : int
         窗口大小
@@ -223,21 +280,6 @@ def _rolling_slope(y: np.ndarray, window: int) -> np.ndarray:
     -------
     np.ndarray
         滚动斜率
-    """
-    n = y.shape[0]
-    out = np.full(n, np.nan, dtype=np.float64)
-    if window < 2:
-        return out
-    x = np.arange(window, dtype=np.float64)
-    x_mean = (window - 1) / 2.0
-    var_x = np.sum((x - x_mean) ** 2)
-    if abs(var_x) < 1e-12:
-        return out
-    for i in range(window - 1, n):
-        y_win = y[i - window + 1: i + 1]
-        if np.any(~np.isfinite(y_win)):
-            continue
-        y_mean = float(np.mean(y_win))
-        cov = float(np.dot(x - x_mean, y_win - y_mean))
-        out[i] = cov / var_x
-    return out
+    """                                                           # [新增]
+    arr = np.asarray(y, dtype=np.float64)                         # [新增]
+    return _rolling_slope_numba(arr, window)                      # [新增]

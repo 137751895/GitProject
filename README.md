@@ -38,12 +38,14 @@ GitProject/
 ├── signal_postprocess.py              # 截面TopN信号后处理模块
 ├── scripts/
 │   └── load_real_data.py              # 真实K线CSV数据加载模块（列映射、校验、回退）
+├── tests/
+│   └── test_custom_features.py        # 9个增强特征因子的单元测试（24个测试用例）
 ├── features/
 │   ├── __init__.py
 │   ├── feature_engineering.py         # 特征工程主模块
 │   ├── feature_engineering_enhanced.py # 增强特征模块（微观结构/高级波动率/缺口衰减）
 │   ├── feature_registry.py            # 特征注册表模块（装饰器式自动发现）
-│   ├── custom_features.py             # 自定义特征示例（@register_feature 用法演示）
+│   ├── custom_features.py             # 自定义特征（11个注册特征，含9个增强报告因子）
 │   ├── feature_context.py             # 特征计算缓存上下文模块
 │   ├── feature_transforms.py         # 深度特征变换模块（非线性/跨周期/变化率/条件/交互）
 │   ├── market_regime.py              # 市场状态识别模块
@@ -639,9 +641,31 @@ Optuna和贝叶斯优化超参搜索（改进点 3.1/3.3），含L2归一化Pipe
 - `FeatureRegistry` — 全局单例注册表，管理所有自定义特征
 - 自动依赖检查、输出列名采集、层级/分组映射
 
-### `features/custom_features.py` — 自定义特征示例
+### `features/custom_features.py` — 自定义特征（11个注册特征）
 
-使用 `@register_feature` 装饰器的示例文件，演示如何用 **1 个文件、1 个装饰器** 添加新特征。
+使用 `@register_feature` 装饰器注册的自定义特征文件，包含：
+
+**原有示例特征 (2个)**：
+- `rsi_14_slope_custom` — RSI(14)的5周期斜率
+- `volume_acceleration` — 成交量变化加速度
+
+**依据《hfml特征工程增强报告-56项目挖掘》集成的9个因子**：
+
+| 特征 | 分组 | 层级 | 综合评分 | 说明 |
+|------|------|------|----------|------|
+| `divergence` | 微观结构 | level4_micro | 22/25 | 资金-价格方向一致性 (sign(ΔOI)×sign(ΔP)) |
+| `vwap_dev` | 量价关系 | level4_micro | 21/25 | 价格相对VWAP偏离度 |
+| `vol_state` | 波动率 | level5_cross | 20/25 | ATR(14)/60日均价归一化波动状态 |
+| `mom_slope` | 动量指标 | level3_momentum | 19/25 | 价格5周期滚动线性回归斜率归一化 |
+| `rsi_slope` | 动量指标 | level3_momentum | 19/25 | RSI(14)的5周期滚动斜率 |
+| `vol_zscore` | 成交量 | level4_micro | 20/25 | 成交量20周期Z分数标准化 |
+| `gap_decay` | 价格形态 | level4_micro | 18/25 | 夜盘缺口指数衰减因子 |
+| `oi_price_alignment` | 跨周期结构 | level5_cross | 20/25 | 持仓变化与价格方向一致性 |
+| `oi_price_magnitude` | 跨周期结构 | level5_cross | 20/25 | OI变化/价格变化幅度比 |
+
+> **注**: `divergence`~`gap_decay` 这7个特征同时存在于 `feature_engineering_enhanced.py` 中（Numba加速版本），
+> 通过 `compute_all_features()` 的去重逻辑，增强模块版本优先使用。注册表版本提供元数据（分组、层级、描述）。
+> `oi_price_alignment` 和 `oi_price_magnitude` 是纯新增特征，仅通过注册表计算。
 
 ---
 

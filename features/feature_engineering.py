@@ -341,7 +341,13 @@ def compute_all_features(df, period="5min"):
     if registry.get_all_entries():                            # [新增]
         custom = registry.compute_registered_features(df, features)  # [新增]
         if len(custom.columns) > 0:                           # [新增]
-            features = pd.concat([features, custom], axis=1)  # [新增]
+            # 去重：跳过已存在的同名列（增强模块优先）         # [新增]
+            new_cols = [c for c in custom.columns              # [新增]
+                        if c not in features.columns]         # [新增]
+            if new_cols:                                      # [新增]
+                features = pd.concat(                         # [新增]
+                    [features, custom[new_cols]], axis=1       # [新增]
+                )                                             # [新增]
 
     return features
 
