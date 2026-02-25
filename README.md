@@ -39,13 +39,13 @@ GitProject/
 ├── scripts/
 │   └── load_real_data.py              # 真实K线CSV数据加载模块（列映射、校验、回退）
 ├── tests/
-│   └── test_custom_features.py        # 自定义特征因子的单元测试（109个测试用例）
+│   └── test_custom_features.py        # 自定义特征因子的单元测试（159个测试用例）
 ├── features/
 │   ├── __init__.py
 │   ├── feature_engineering.py         # 特征工程主模块
 │   ├── feature_engineering_enhanced.py # 增强特征模块（微观结构/高级波动率/缺口衰减/辅助函数）
 │   ├── feature_registry.py            # 特征注册表模块（装饰器式自动发现）
-│   ├── custom_features.py             # 自定义特征（62个注册特征，含9个增强因子+10个精选因子+21个第二辑因子+20个第三辑因子+2个示例）
+│   ├── custom_features.py             # 自定义特征（82个注册特征，含9+10+21+20+20个因子+2个示例）
 │   ├── feature_context.py             # 特征计算缓存上下文模块
 │   ├── feature_transforms.py         # 深度特征变换模块（非线性/跨周期/变化率/条件/交互）
 │   ├── market_regime.py              # 市场状态识别模块
@@ -128,7 +128,7 @@ GitProject/
 | `compute_candle_features()` | K线形态特征 | `body_ratio`, `upper_shadow_ratio`, `lower_shadow_ratio`, `candle_direction`, `amplitude`, `gap`, `gap_ratio` |
 | `compute_volatility_features()` | 波动率特征 | `volatility_*`, `return_ma_*`, `log_return` |
 | `compute_price_position()` | 价格位置特征 | `price_position`, `dist_to_high`, `dist_to_low` |
-| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换 + 注册表自定义特征） | 176+个特征（随自定义特征增加） |
+| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换 + 注册表自定义特征） | 205+个特征（随自定义特征增加） |
 | `get_feature_hierarchy()` | **获取分层特征结构**，按6层层级组织全部特征（自动合并注册表特征） | 层级字典 |
 | `compute_prediction_targets()` | 预测目标 | `future_return`, `future_direction`, `future_volatility`, `future_regime` |
 
@@ -641,7 +641,7 @@ Optuna和贝叶斯优化超参搜索（改进点 3.1/3.3），含L2归一化Pipe
 - `FeatureRegistry` — 全局单例注册表，管理所有自定义特征
 - 自动依赖检查、输出列名采集、层级/分组映射
 
-### `features/custom_features.py` — 自定义特征（62个注册特征）
+### `features/custom_features.py` — 自定义特征（82个注册特征）
 
 使用 `@register_feature` 装饰器注册的自定义特征文件，包含：
 
@@ -731,7 +731,33 @@ Optuna和贝叶斯优化超参搜索（改进点 3.1/3.3），含L2归一化Pipe
 
 > **注**: `divergence`~`gap_decay` 这7个特征同时存在于 `feature_engineering_enhanced.py` 中（Numba加速版本），
 > 通过 `compute_all_features()` 的去重逻辑，增强模块版本优先使用。注册表版本提供元数据（分组、层级、描述）。
-> `oi_price_alignment`、`oi_price_magnitude` 和全部10+21+20个精选特征是纯新增特征，仅通过注册表计算。
+> `oi_price_alignment`、`oi_price_magnitude` 和全部10+21+20+20个精选特征是纯新增特征，仅通过注册表计算。
+
+**依据《hfml特征工程增强报告-精选20特征-第四辑》集成的20个因子**（含公式验证与Bug修复）：
+
+| 特征名 | 类别 | 层级 | 优先级 | 说明 | Bug修复 |
+|--------|------|------|--------|------|---------|
+| `spectral_ratio` | 谱分析 | level6_transforms | P2 | 高频/低频谱能量比 | 起始索引修复 |
+| `dominant_frequency` | 谱分析 | level6_transforms | P2 | 主导频率（最大自相关滞后倒数） | 起始索引修复 |
+| `wavelet_energy_s1`~`s5` | 小波变换 | level6_transforms | P2 | 5尺度Haar小波能量 | — |
+| `wavelet_entropy` | 小波变换 | level6_transforms | P2 | 多尺度能量分布熵（归一化） | 依赖解析修复 |
+| `extreme_value_index` | 极值理论 | level6_transforms | P1 | Hill estimator尾部指数 | 公式修正（Hill→GPD） |
+| `tail_dependence` | 极值理论 | level6_transforms | P2 | 尾部条件概率（需基准） | — |
+| `copula_dependence` | Copula依赖 | level6_transforms | P2 | Copula相关性（Kendall→Gauss） | — |
+| `rank_correlation` | Copula依赖 | level6_transforms | P1 | Spearman秩相关 | — |
+| `ml_derived_volatility` | 机器学习衍生 | level6_transforms | P1 | GARCH(1,1)条件波动率 | — |
+| `ml_derived_trend` | 机器学习衍生 | level6_transforms | P1 | 标准化趋势斜率 | **前视偏差修复** |
+| `order_book_imbalance_proxy` | 微观结构深度 | level4_micro | P1 | 订单簿不平衡代理 | — |
+| `depth_pressure` | 微观结构深度 | level4_micro | P1 | 市场深度压力 | — |
+| `herding_behavior` | 行为金融 | level6_transforms | P2 | 羊群行为CSAD指标 | **公式修正** |
+| `overreaction_score` | 行为金融 | level6_transforms | P2 | 过度反应得分 | **前视偏差修复** |
+| `morning/afternoon/night_session` | 日历效应 | level1_price | P1 | 交易时段标识 | — |
+| `session_vol_ratio` | 日历效应 | level1_price | P1 | 时段波动率比率 | — |
+| `hour/weekday_seasonality` | 日历效应 | level5_cross | P2 | 小时/星期季节性强度 | **to_period崩溃修复** |
+| `cumulant_3`, `cumulant_4` | 高阶统计 | level6_transforms | P2 | 三阶/四阶累积量 | — |
+| `z_score_of_z_scores` | 高阶统计 | level6_transforms | P1 | 极端异常值检测 | — |
+| `network_centrality` | 复杂网络 | level6_transforms | P3 | 特征向量中心度（需多品种） | — |
+| `community_strength` | 复杂网络 | level6_transforms | P3 | 板块群落强度（需多品种） | — |
 
 ---
 
