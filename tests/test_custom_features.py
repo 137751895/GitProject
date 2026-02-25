@@ -1051,10 +1051,11 @@ class TestPriceReversalMetric:
 class TestVolumePriceCorrelation:
 
     def test_positive_corr(self):
-        """价涨量增应正相关"""
+        """放量大涨、缩量小涨 → returns与volume正相关"""
+        # Returns vary: large returns at high volume, small at low volume
         input_df = pd.DataFrame({
-            "close": [100.0, 101, 102, 103, 104, 105, 106, 107, 108, 109],
-            "volume": [100.0, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+            "close": [100, 100.1, 101, 101.1, 103, 103.1, 106, 106.1, 110, 110.1],
+            "volume": [100, 100, 500, 100, 500, 100, 500, 100, 500, 100],
         })
         from features.custom_features import compute_volume_price_correlation
         result = compute_volume_price_correlation(input_df, window=8)["volume_price_correlation"]

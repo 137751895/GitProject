@@ -335,3 +335,133 @@ def _rolling_autocorr_numba(arr, window, lag=1):                  # [新增]
         out[i] = cov / var                                        # [新增]
                                                                   # [新增]
     return out                                                    # [新增]
+
+
+@_njit(cache=True)                                                # [新增]
+def _rolling_corr_numba(x, y, window):                            # [新增]
+    """Numba加速的滚动相关系数计算。
+
+    Parameters
+    ----------
+    x, y : np.ndarray
+        输入数组 (float64)
+    window : int
+        窗口大小
+
+    Returns
+    -------
+    np.ndarray
+        滚动相关系数
+    """                                                           # [新增]
+    n = len(x)                                                    # [新增]
+    result = np.full(n, np.nan)                                   # [新增]
+                                                                  # [新增]
+    for i in range(window - 1, n):                                # [新增]
+        x_window = x[i - window + 1 : i + 1]                     # [新增]
+        y_window = y[i - window + 1 : i + 1]                     # [新增]
+                                                                  # [新增]
+        has_nan = False                                           # [新增]
+        for j in range(window):                                   # [新增]
+            if np.isnan(x_window[j]) or np.isnan(y_window[j]):   # [新增]
+                has_nan = True                                    # [新增]
+                break                                             # [新增]
+        if has_nan:                                               # [新增]
+            continue                                              # [新增]
+                                                                  # [新增]
+        x_mean = 0.0                                              # [新增]
+        y_mean = 0.0                                              # [新增]
+        for j in range(window):                                   # [新增]
+            x_mean += x_window[j]                                 # [新增]
+            y_mean += y_window[j]                                 # [新增]
+        x_mean /= window                                          # [新增]
+        y_mean /= window                                          # [新增]
+                                                                  # [新增]
+        cov = 0.0                                                 # [新增]
+        x_var = 0.0                                               # [新增]
+        y_var = 0.0                                               # [新增]
+        for j in range(window):                                   # [新增]
+            x_dev = x_window[j] - x_mean                          # [新增]
+            y_dev = y_window[j] - y_mean                          # [新增]
+            cov += x_dev * y_dev                                  # [新增]
+            x_var += x_dev * x_dev                                # [新增]
+            y_var += y_dev * y_dev                                # [新增]
+                                                                  # [新增]
+        if x_var > 0 and y_var > 0:                               # [新增]
+            result[i] = cov / np.sqrt(x_var * y_var)              # [新增]
+                                                                  # [新增]
+    return result                                                 # [新增]
+
+
+@_njit(cache=True)                                                # [新增]
+def _variance_ratio_numba(returns, q, window):                    # [新增]
+    """Numba加速的方差比率计算。
+
+    VR > 1 表示趋势, VR < 1 表示均值回归, VR ≈ 1 表示随机游走。
+
+    Parameters
+    ----------
+    returns : np.ndarray
+        收益率序列
+    q : int
+        聚合期数
+    window : int
+        滚动窗口大小
+
+    Returns
+    -------
+    np.ndarray
+        方差比率
+    """                                                           # [新增]
+    n = len(returns)                                              # [新增]
+    result = np.full(n, np.nan)                                   # [新增]
+                                                                  # [新增]
+    if n < window + q:                                            # [新增]
+        return result                                             # [新增]
+                                                                  # [新增]
+    for i in range(window + q, n):                                # [新增]
+        y = returns[i - window : i]                               # [新增]
+                                                                  # [新增]
+        var_1 = 0.0                                               # [新增]
+        count_1 = 0                                               # [新增]
+        for j in range(1, window):                                # [新增]
+            if not np.isnan(y[j]) and not np.isnan(y[j - 1]):    # [新增]
+                var_1 += y[j] * y[j]                              # [新增]
+                count_1 += 1                                      # [新增]
+                                                                  # [新增]
+        if count_1 < 10:                                          # [新增]
+            continue                                              # [新增]
+                                                                  # [新增]
+        var_1 = var_1 / count_1                                   # [新增]
+                                                                  # [新增]
+        q_returns = np.zeros(window - q + 1)                      # [新增]
+        for j in range(window - q):                               # [新增]
+            q_sum = 0.0                                           # [新增]
+            for k in range(q):                                    # [新增]
+                if not np.isnan(y[j + k + 1]):                    # [新增]
+                    q_sum += y[j + k + 1]                         # [新增]
+            q_returns[j] = q_sum                                  # [新增]
+                                                                  # [新增]
+        q_mean = 0.0                                              # [新增]
+        q_count = 0                                               # [新增]
+        for j in range(window - q):                               # [新增]
+            if not np.isnan(q_returns[j]):                        # [新增]
+                q_mean += q_returns[j]                             # [新增]
+                q_count += 1                                      # [新增]
+                                                                  # [新增]
+        if q_count < 5:                                           # [新增]
+            continue                                              # [新增]
+                                                                  # [新增]
+        q_mean /= q_count                                         # [新增]
+                                                                  # [新增]
+        var_q = 0.0                                               # [新增]
+        for j in range(window - q):                               # [新增]
+            if not np.isnan(q_returns[j]):                        # [新增]
+                var_q += (q_returns[j] - q_mean) ** 2             # [新增]
+                                                                  # [新增]
+        if q_count > 0:                                           # [新增]
+            var_q = var_q / q_count                               # [新增]
+                                                                  # [新增]
+        if var_1 > 0 and var_q > 0:                               # [新增]
+            result[i] = var_q / (q * var_1)                       # [新增]
+                                                                  # [新增]
+    return result                                                 # [新增]
