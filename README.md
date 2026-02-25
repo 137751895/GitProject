@@ -39,13 +39,13 @@ GitProject/
 ├── scripts/
 │   └── load_real_data.py              # 真实K线CSV数据加载模块（列映射、校验、回退）
 ├── tests/
-│   └── test_custom_features.py        # 9个增强特征因子的单元测试（24个测试用例）
+│   └── test_custom_features.py        # 自定义特征因子的单元测试（44个测试用例）
 ├── features/
 │   ├── __init__.py
 │   ├── feature_engineering.py         # 特征工程主模块
-│   ├── feature_engineering_enhanced.py # 增强特征模块（微观结构/高级波动率/缺口衰减）
+│   ├── feature_engineering_enhanced.py # 增强特征模块（微观结构/高级波动率/缺口衰减/辅助函数）
 │   ├── feature_registry.py            # 特征注册表模块（装饰器式自动发现）
-│   ├── custom_features.py             # 自定义特征（11个注册特征，含9个增强报告因子）
+│   ├── custom_features.py             # 自定义特征（21个注册特征，含9个增强因子+10个精选因子）
 │   ├── feature_context.py             # 特征计算缓存上下文模块
 │   ├── feature_transforms.py         # 深度特征变换模块（非线性/跨周期/变化率/条件/交互）
 │   ├── market_regime.py              # 市场状态识别模块
@@ -128,7 +128,7 @@ GitProject/
 | `compute_candle_features()` | K线形态特征 | `body_ratio`, `upper_shadow_ratio`, `lower_shadow_ratio`, `candle_direction`, `amplitude`, `gap`, `gap_ratio` |
 | `compute_volatility_features()` | 波动率特征 | `volatility_*`, `return_ma_*`, `log_return` |
 | `compute_price_position()` | 价格位置特征 | `price_position`, `dist_to_high`, `dist_to_low` |
-| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换 + 注册表自定义特征） | 120+个特征（随自定义特征增加） |
+| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换 + 注册表自定义特征） | 135+个特征（随自定义特征增加） |
 | `get_feature_hierarchy()` | **获取分层特征结构**，按6层层级组织全部特征（自动合并注册表特征） | 层级字典 |
 | `compute_prediction_targets()` | 预测目标 | `future_return`, `future_direction`, `future_volatility`, `future_regime` |
 
@@ -641,7 +641,7 @@ Optuna和贝叶斯优化超参搜索（改进点 3.1/3.3），含L2归一化Pipe
 - `FeatureRegistry` — 全局单例注册表，管理所有自定义特征
 - 自动依赖检查、输出列名采集、层级/分组映射
 
-### `features/custom_features.py` — 自定义特征（11个注册特征）
+### `features/custom_features.py` — 自定义特征（21个注册特征）
 
 使用 `@register_feature` 装饰器注册的自定义特征文件，包含：
 
@@ -663,9 +663,24 @@ Optuna和贝叶斯优化超参搜索（改进点 3.1/3.3），含L2归一化Pipe
 | `oi_price_alignment` | 跨周期结构 | level5_cross | 20/25 | 持仓变化与价格方向一致性 |
 | `oi_price_magnitude` | 跨周期结构 | level5_cross | 20/25 | OI变化/价格变化幅度比 |
 
+**依据《hfml特征工程增强报告-精选10特征》集成的10个精选因子**：
+
+| 特征 | 分组 | 层级 | 优先级 | 说明 | Numba加速 |
+|------|------|------|--------|------|-----------|
+| `buy_sell_pressure` | 微观结构 | level4_micro | P0 | K线位置买卖净压力 [-1,1] | ✅ |
+| `volatility_skew` | 波动率 | level5_cross | P0 | 收益率滚动偏度（window=20） | ❌ |
+| `momentum_cross` | 动量指标 | level5_cross | P1 | 快慢周期动量差值（fast=5, slow=20） | ❌ |
+| `autocorrelation_1` | 时间序列 | level6_transforms | P1 | 1阶自相关系数（window=20） | ✅ |
+| `vwap_std` | 成交量 | level5_cross | P2 | VWAP滚动标准差（window=20） | ❌ |
+| `tick_imbalance_proxy` | 微观结构 | level4_micro | P2 | 价格变动方向不平衡代理（window=10） | ❌ |
+| `volatility_of_volatility` | 波动率 | level5_cross | P3 | 波动率的波动率 | ❌ |
+| `trend_strength_ratio` | 趋势指标 | level5_cross | P3 | 短/长期趋势强度比率（tanh归一化） | 依赖 `_rolling_slope` |
+| `volume_profile_skew` | 成交量 | level6_transforms | P4 | 成交量分布偏度（window=20, bins=10） | ✅ |
+| `hurst_exponent_approx` | 时间序列 | level6_transforms | P4 | Hurst指数近似（min_periods=100） | ✅ |
+
 > **注**: `divergence`~`gap_decay` 这7个特征同时存在于 `feature_engineering_enhanced.py` 中（Numba加速版本），
 > 通过 `compute_all_features()` 的去重逻辑，增强模块版本优先使用。注册表版本提供元数据（分组、层级、描述）。
-> `oi_price_alignment` 和 `oi_price_magnitude` 是纯新增特征，仅通过注册表计算。
+> `oi_price_alignment`、`oi_price_magnitude` 和全部10个精选特征是纯新增特征，仅通过注册表计算。
 
 ---
 
