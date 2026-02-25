@@ -39,13 +39,13 @@ GitProject/
 ├── scripts/
 │   └── load_real_data.py              # 真实K线CSV数据加载模块（列映射、校验、回退）
 ├── tests/
-│   └── test_custom_features.py        # 自定义特征因子的单元测试（44个测试用例）
+│   └── test_custom_features.py        # 自定义特征因子的单元测试（86个测试用例）
 ├── features/
 │   ├── __init__.py
 │   ├── feature_engineering.py         # 特征工程主模块
 │   ├── feature_engineering_enhanced.py # 增强特征模块（微观结构/高级波动率/缺口衰减/辅助函数）
 │   ├── feature_registry.py            # 特征注册表模块（装饰器式自动发现）
-│   ├── custom_features.py             # 自定义特征（21个注册特征，含9个增强因子+10个精选因子）
+│   ├── custom_features.py             # 自定义特征（42个注册特征，含9个增强因子+10个精选因子+21个第二辑因子+2个示例）
 │   ├── feature_context.py             # 特征计算缓存上下文模块
 │   ├── feature_transforms.py         # 深度特征变换模块（非线性/跨周期/变化率/条件/交互）
 │   ├── market_regime.py              # 市场状态识别模块
@@ -128,7 +128,7 @@ GitProject/
 | `compute_candle_features()` | K线形态特征 | `body_ratio`, `upper_shadow_ratio`, `lower_shadow_ratio`, `candle_direction`, `amplitude`, `gap`, `gap_ratio` |
 | `compute_volatility_features()` | 波动率特征 | `volatility_*`, `return_ma_*`, `log_return` |
 | `compute_price_position()` | 价格位置特征 | `price_position`, `dist_to_high`, `dist_to_low` |
-| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换 + 注册表自定义特征） | 135+个特征（随自定义特征增加） |
+| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换 + 注册表自定义特征） | 156+个特征（随自定义特征增加） |
 | `get_feature_hierarchy()` | **获取分层特征结构**，按6层层级组织全部特征（自动合并注册表特征） | 层级字典 |
 | `compute_prediction_targets()` | 预测目标 | `future_return`, `future_direction`, `future_volatility`, `future_regime` |
 
@@ -641,7 +641,7 @@ Optuna和贝叶斯优化超参搜索（改进点 3.1/3.3），含L2归一化Pipe
 - `FeatureRegistry` — 全局单例注册表，管理所有自定义特征
 - 自动依赖检查、输出列名采集、层级/分组映射
 
-### `features/custom_features.py` — 自定义特征（21个注册特征）
+### `features/custom_features.py` — 自定义特征（42个注册特征）
 
 使用 `@register_feature` 装饰器注册的自定义特征文件，包含：
 
@@ -678,9 +678,35 @@ Optuna和贝叶斯优化超参搜索（改进点 3.1/3.3），含L2归一化Pipe
 | `volume_profile_skew` | 成交量 | level6_transforms | P4 | 成交量分布偏度（window=20, bins=10） | ✅ |
 | `hurst_exponent_approx` | 时间序列 | level6_transforms | P4 | Hurst指数近似（min_periods=100） | ✅ |
 
+**依据《hfml特征工程增强报告-精选20特征-第二辑》集成的21个因子**：
+
+| 特征 | 分组 | 层级 | 优先级 | 说明 | Numba加速 |
+|------|------|------|--------|------|-----------|
+| `parkinson_volatility` | 波动率 | level3_momentum | P0 | Parkinson极差波动率估计 | ✅ |
+| `rogers_satchell_vol` | 波动率 | level3_momentum | P0 | Rogers-Satchell波动率（考虑漂移） | ✅ |
+| `yang_zhang_vol` | 波动率 | level3_momentum | P1 | Yang-Zhang最优极差波动率 | ✅ |
+| `roll_impact` | 流动性 | level4_micro | P1 | Roll冲击成本估计 | ✅ |
+| `amihud_illiquidity` | 流动性 | level4_micro | P1 | Amihud非流动性指标 (×1e6) | ✅ |
+| `pastor_stambaugh` | 流动性 | level4_micro | P2 | Pastor-Stambaugh反转流动性代理 | ❌ |
+| `roll_spread_estimate` | 微观结构 | level4_micro | P2 | Roll有效价差估计 | ✅ |
+| `corwin_schultz_spread` | 微观结构 | level4_micro | P2 | Corwin-Schultz高频价差 | ✅ |
+| `volume_synchronized_vol` | 成交量 | level5_cross | P1 | 成交量同步波动率 | ✅ |
+| `volume_weighted_atr` | 成交量 | level5_cross | P1 | 成交量加权ATR | ❌ |
+| `serial_correlation` | 时间序列 | level6_transforms | P2 | 收益率序列相关性强度 | ✅ |
+| `partial_autocorrelation` | 时间序列 | level6_transforms | P2 | 一阶偏自相关系数 | ✅ |
+| `variance_ratio` | 时间序列 | level6_transforms | P2 | 方差比率（>1趋势,<1均值回归） | ✅ |
+| `bid_ask_spread_proxy` | 微观结构 | level4_micro | P0 | 买卖价差代理（相对价差） | ❌ |
+| `effective_spread_proxy` | 微观结构 | level4_micro | P1 | 有效价差代理 | ❌ |
+| `price_reversal_metric` | 微观结构 | level4_micro | P1 | 价格反转强度 (-autocorr) | ✅ |
+| `volume_price_correlation` | 量价关系 | level4_micro | P1 | 量价滚动相关性 | ✅ |
+| `open_interest_momentum` | 持仓分析 | level5_cross | P2 | 持仓量快慢动量差值 | ❌ |
+| `long_short_ratio_proxy` | 持仓分析 | level5_cross | P2 | 多空比代理 (OI×price×|OI|) | ❌ |
+| `kurtosis_returns` | 高阶统计 | level6_transforms | P3 | 收益率峰度（尾部风险） | ✅ |
+| `herfindahl_volume` | 成交量 | level4_micro | P3 | 成交量赫芬达尔集中度 | ✅ |
+
 > **注**: `divergence`~`gap_decay` 这7个特征同时存在于 `feature_engineering_enhanced.py` 中（Numba加速版本），
 > 通过 `compute_all_features()` 的去重逻辑，增强模块版本优先使用。注册表版本提供元数据（分组、层级、描述）。
-> `oi_price_alignment`、`oi_price_magnitude` 和全部10个精选特征是纯新增特征，仅通过注册表计算。
+> `oi_price_alignment`、`oi_price_magnitude` 和全部10+21个精选特征是纯新增特征，仅通过注册表计算。
 
 ---
 
