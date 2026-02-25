@@ -1533,5 +1533,457 @@ class TestBatch3Integration:
 
 
 
+# ===========================================================================
+# Batch-4 Tests (20 new features)
+# ===========================================================================
+
+def _make_batch4_df(n=300):
+    """Create a DataFrame for batch-4 testing."""
+    np.random.seed(42)
+    dates = pd.date_range("2024-01-01 09:00", periods=n, freq="5min")
+    close = 100 + np.cumsum(np.random.randn(n) * 0.5)
+    high = close + np.abs(np.random.randn(n) * 0.5) + 0.1
+    low = close - np.abs(np.random.randn(n) * 0.5) - 0.1
+    open_ = close + np.random.randn(n) * 0.3
+    volume = np.abs(np.random.randn(n) * 200) + 100
+    oi = 5000.0 + np.cumsum(np.random.randn(n) * 10)
+    return pd.DataFrame({
+        "close": close,
+        "open": open_,
+        "high": high,
+        "low": low,
+        "volume": volume,
+        "open_interest": oi,
+    }, index=dates)
+
+
+class TestSpectralRatio:
+    def test_values_in_0_1(self):
+        from features.custom_features import compute_spectral_ratio
+        df = _make_batch4_df(200)
+        result = compute_spectral_ratio(df)
+        valid = result["spectral_ratio"].dropna()
+        assert len(valid) > 0
+        assert (valid >= 0).all() and (valid <= 1).all()
+
+    def test_output_length(self):
+        from features.custom_features import compute_spectral_ratio
+        df = _make_batch4_df(200)
+        result = compute_spectral_ratio(df)
+        assert len(result) == 200
+
+    def test_column_name(self):
+        from features.custom_features import compute_spectral_ratio
+        df = _make_batch4_df(200)
+        result = compute_spectral_ratio(df)
+        assert "spectral_ratio" in result.columns
+
+
+class TestDominantFrequency:
+    def test_positive_values(self):
+        from features.custom_features import compute_dominant_frequency
+        df = _make_batch4_df(300)
+        result = compute_dominant_frequency(df)
+        valid = result["dominant_frequency"].dropna()
+        assert len(valid) > 0
+        assert (valid >= 0).all()
+
+    def test_output_length(self):
+        from features.custom_features import compute_dominant_frequency
+        df = _make_batch4_df(300)
+        result = compute_dominant_frequency(df)
+        assert len(result) == 300
+
+
+class TestWaveletEnergy:
+    def test_five_columns(self):
+        from features.custom_features import compute_wavelet_energy
+        df = _make_batch4_df(300)
+        result = compute_wavelet_energy(df)
+        expected_cols = [f"wavelet_energy_s{i}" for i in range(1, 6)]
+        for col in expected_cols:
+            assert col in result.columns
+
+    def test_non_negative(self):
+        from features.custom_features import compute_wavelet_energy
+        df = _make_batch4_df(300)
+        result = compute_wavelet_energy(df)
+        for col in result.columns:
+            valid = result[col].dropna()
+            if len(valid) > 0:
+                assert (valid >= 0).all(), f"{col} has negative values"
+
+    def test_output_length(self):
+        from features.custom_features import compute_wavelet_energy
+        df = _make_batch4_df(300)
+        result = compute_wavelet_energy(df)
+        assert len(result) == 300
+
+
+class TestWaveletEntropy:
+    def test_with_precomputed_energy(self):
+        from features.custom_features import compute_wavelet_entropy, compute_wavelet_energy
+        df = _make_batch4_df(300)
+        energy_df = compute_wavelet_energy(df)
+        result = compute_wavelet_entropy(df, features_df=energy_df)
+        valid = result["wavelet_entropy"].dropna()
+        assert len(valid) > 0
+        assert (valid >= 0).all() and (valid <= 1).all()
+
+    def test_nan_without_features(self):
+        from features.custom_features import compute_wavelet_entropy
+        df = _make_batch4_df(300)
+        result = compute_wavelet_entropy(df, features_df=None)
+        assert result["wavelet_entropy"].isna().all()
+
+    def test_nan_with_incomplete_features(self):
+        from features.custom_features import compute_wavelet_entropy
+        df = _make_batch4_df(300)
+        partial = pd.DataFrame({"wavelet_energy_s1": np.ones(300)}, index=df.index)
+        result = compute_wavelet_entropy(df, features_df=partial)
+        assert result["wavelet_entropy"].isna().all()
+
+
+class TestExtremeValueIndex:
+    def test_positive_values(self):
+        from features.custom_features import compute_extreme_value_index
+        df = _make_batch4_df(300)
+        result = compute_extreme_value_index(df)
+        valid = result["extreme_value_index"].dropna()
+        assert len(valid) > 0
+        assert (valid >= 0).all()
+
+    def test_output_length(self):
+        from features.custom_features import compute_extreme_value_index
+        df = _make_batch4_df(300)
+        result = compute_extreme_value_index(df)
+        assert len(result) == 300
+
+
+class TestTailDependence:
+    def test_nan_without_benchmark(self):
+        from features.custom_features import compute_tail_dependence
+        df = _make_batch4_df(300)
+        result = compute_tail_dependence(df, benchmark_col=None)
+        assert result["tail_dependence"].isna().all()
+
+    def test_nan_with_missing_benchmark_col(self):
+        from features.custom_features import compute_tail_dependence
+        df = _make_batch4_df(300)
+        result = compute_tail_dependence(df, benchmark_col="nonexistent")
+        assert result["tail_dependence"].isna().all()
+
+
+class TestCopulaDependence:
+    def test_nan_without_benchmark(self):
+        from features.custom_features import compute_copula_dependence
+        df = _make_batch4_df(300)
+        result = compute_copula_dependence(df, benchmark_col=None)
+        assert result["copula_dependence"].isna().all()
+
+    def test_nan_with_missing_benchmark_col(self):
+        from features.custom_features import compute_copula_dependence
+        df = _make_batch4_df(300)
+        result = compute_copula_dependence(df, benchmark_col="nonexistent")
+        assert result["copula_dependence"].isna().all()
+
+
+class TestRankCorrelation:
+    def test_values_in_minus1_1(self):
+        from features.custom_features import compute_rank_correlation
+        df = _make_batch4_df(300)
+        result = compute_rank_correlation(df, col1="close", col2="volume")
+        valid = result["rank_correlation"].dropna()
+        assert len(valid) > 0
+        assert (valid >= -1).all() and (valid <= 1).all()
+
+    def test_output_length(self):
+        from features.custom_features import compute_rank_correlation
+        df = _make_batch4_df(300)
+        result = compute_rank_correlation(df)
+        assert len(result) == 300
+
+    def test_nan_with_missing_col(self):
+        from features.custom_features import compute_rank_correlation
+        df = _make_batch4_df(300)
+        result = compute_rank_correlation(df, col1="close", col2="nonexistent")
+        assert result["rank_correlation"].isna().all()
+
+
+class TestMlDerivedVolatility:
+    def test_positive_values(self):
+        from features.custom_features import compute_ml_derived_volatility
+        df = _make_batch4_df(300)
+        result = compute_ml_derived_volatility(df)
+        valid = result["ml_derived_volatility"].dropna()
+        assert len(valid) > 0
+        assert (valid >= 0).all()
+
+    def test_output_length(self):
+        from features.custom_features import compute_ml_derived_volatility
+        df = _make_batch4_df(300)
+        result = compute_ml_derived_volatility(df)
+        assert len(result) == 300
+
+
+class TestMlDerivedTrend:
+    def test_outputs_slope_not_price(self):
+        from features.custom_features import compute_ml_derived_trend
+        df = _make_batch4_df(300)
+        result = compute_ml_derived_trend(df)
+        valid = result["ml_derived_trend"].dropna()
+        assert len(valid) > 0
+        # Slope values should be much smaller than price levels
+        assert valid.abs().max() < df["close"].max()
+
+    def test_output_length(self):
+        from features.custom_features import compute_ml_derived_trend
+        df = _make_batch4_df(300)
+        result = compute_ml_derived_trend(df)
+        assert len(result) == 300
+
+
+class TestOrderBookImbalanceProxy:
+    def test_valid_values(self):
+        from features.custom_features import compute_order_book_imbalance_proxy
+        df = _make_batch4_df(300)
+        result = compute_order_book_imbalance_proxy(df)
+        valid = result["order_book_imbalance_proxy"].dropna()
+        assert len(valid) > 0
+        assert np.isfinite(valid).all()
+
+    def test_output_length(self):
+        from features.custom_features import compute_order_book_imbalance_proxy
+        df = _make_batch4_df(300)
+        result = compute_order_book_imbalance_proxy(df)
+        assert len(result) == 300
+
+
+class TestDepthPressure:
+    def test_positive_values(self):
+        from features.custom_features import compute_depth_pressure
+        df = _make_batch4_df(300)
+        result = compute_depth_pressure(df)
+        valid = result["depth_pressure"].dropna()
+        assert len(valid) > 0
+        assert (valid >= 0).all()
+
+    def test_output_length(self):
+        from features.custom_features import compute_depth_pressure
+        df = _make_batch4_df(300)
+        result = compute_depth_pressure(df)
+        assert len(result) == 300
+
+
+class TestHerdingBehavior:
+    def test_clipped_values(self):
+        from features.custom_features import compute_herding_behavior
+        df = _make_batch4_df(300)
+        result = compute_herding_behavior(df)
+        valid = result["herding_behavior"].dropna()
+        assert len(valid) > 0
+        assert (valid >= -5).all() and (valid <= 5).all()
+
+    def test_output_length(self):
+        from features.custom_features import compute_herding_behavior
+        df = _make_batch4_df(300)
+        result = compute_herding_behavior(df)
+        assert len(result) == 300
+
+
+class TestOverreactionScore:
+    def test_non_negative(self):
+        from features.custom_features import compute_overreaction_score
+        df = _make_batch4_df(300)
+        result = compute_overreaction_score(df)
+        valid = result["overreaction_score"].dropna()
+        assert len(valid) > 0
+        assert (valid >= 0).all()
+
+    def test_no_look_ahead_bias(self):
+        """Verify overreaction_score at index i only depends on data[:i+1]."""
+        from features.custom_features import compute_overreaction_score
+        df = _make_batch4_df(300)
+        full_result = compute_overreaction_score(df)
+        # Compute on truncated data; last valid value should match
+        trunc = df.iloc[:200]
+        trunc_result = compute_overreaction_score(trunc)
+        # The value at index 199 should be the same in both
+        assert np.isclose(
+            full_result["overreaction_score"].iloc[199],
+            trunc_result["overreaction_score"].iloc[199],
+            equal_nan=True,
+        )
+
+    def test_output_length(self):
+        from features.custom_features import compute_overreaction_score
+        df = _make_batch4_df(300)
+        result = compute_overreaction_score(df)
+        assert len(result) == 300
+
+
+class TestCalendarEffect:
+    def test_produces_4_columns(self):
+        from features.custom_features import compute_calendar_effect
+        df = _make_batch4_df(300)
+        result = compute_calendar_effect(df)
+        expected = {"morning_session", "afternoon_session", "night_session", "session_vol_ratio"}
+        assert expected.issubset(set(result.columns))
+
+    def test_session_binary(self):
+        from features.custom_features import compute_calendar_effect
+        df = _make_batch4_df(300)
+        result = compute_calendar_effect(df)
+        for col in ["morning_session", "afternoon_session", "night_session"]:
+            valid = result[col].dropna()
+            assert set(valid.unique()).issubset({0.0, 1.0})
+
+    def test_output_length(self):
+        from features.custom_features import compute_calendar_effect
+        df = _make_batch4_df(300)
+        result = compute_calendar_effect(df)
+        assert len(result) == 300
+
+
+class TestSeasonalityStrength:
+    def test_produces_2_columns(self):
+        from features.custom_features import compute_seasonality_strength
+        df = _make_batch4_df(300)
+        result = compute_seasonality_strength(df)
+        assert "hour_seasonality" in result.columns
+        assert "weekday_seasonality" in result.columns
+
+    def test_output_length(self):
+        from features.custom_features import compute_seasonality_strength
+        df = _make_batch4_df(300)
+        result = compute_seasonality_strength(df)
+        assert len(result) == 300
+
+
+class TestHigherOrderCumulant:
+    def test_produces_2_columns(self):
+        from features.custom_features import compute_higher_order_cumulant
+        df = _make_batch4_df(300)
+        result = compute_higher_order_cumulant(df)
+        assert "cumulant_3" in result.columns
+        assert "cumulant_4" in result.columns
+
+    def test_output_length(self):
+        from features.custom_features import compute_higher_order_cumulant
+        df = _make_batch4_df(300)
+        result = compute_higher_order_cumulant(df)
+        assert len(result) == 300
+
+    def test_valid_values(self):
+        from features.custom_features import compute_higher_order_cumulant
+        df = _make_batch4_df(300)
+        result = compute_higher_order_cumulant(df)
+        for col in ["cumulant_3", "cumulant_4"]:
+            valid = result[col].dropna()
+            assert len(valid) > 0
+            assert np.isfinite(valid).all()
+
+
+class TestZScoreOfZScores:
+    def test_produces_values(self):
+        from features.custom_features import compute_z_score_of_z_scores
+        df = _make_batch4_df(300)
+        result = compute_z_score_of_z_scores(df)
+        valid = result["z_score_of_z_scores"].dropna()
+        assert len(valid) > 0
+        assert np.isfinite(valid).all()
+
+    def test_output_length(self):
+        from features.custom_features import compute_z_score_of_z_scores
+        df = _make_batch4_df(300)
+        result = compute_z_score_of_z_scores(df)
+        assert len(result) == 300
+
+
+class TestNetworkCentrality:
+    def test_nan_without_symbol_cols(self):
+        from features.custom_features import compute_network_centrality
+        df = _make_batch4_df(300)
+        result = compute_network_centrality(df, symbol_cols=None)
+        assert result["network_centrality"].isna().all()
+
+    def test_nan_with_insufficient_symbols(self):
+        from features.custom_features import compute_network_centrality
+        df = _make_batch4_df(300)
+        result = compute_network_centrality(df, symbol_cols=["close"])
+        assert result["network_centrality"].isna().all()
+
+
+class TestCommunityStrength:
+    def test_nan_without_symbol_cols(self):
+        from features.custom_features import compute_community_strength
+        df = _make_batch4_df(300)
+        result = compute_community_strength(df, symbol_cols=None)
+        assert result["community_strength"].isna().all()
+
+    def test_nan_without_sector_map(self):
+        from features.custom_features import compute_community_strength
+        df = _make_batch4_df(300)
+        result = compute_community_strength(df, symbol_cols=["a", "b", "c"], sector_map=None)
+        assert result["community_strength"].isna().all()
+
+
+class TestBatch4Integration:
+    def test_all_20_registered(self):
+        from features.feature_registry import FeatureRegistry
+        import features.custom_features  # noqa: F401
+        registry = FeatureRegistry()
+        all_output_names = set()
+        for name, entry in registry.get_all_entries().items():
+            all_output_names.update(entry.output_names)
+        batch4 = {
+            "spectral_ratio", "dominant_frequency",
+            "wavelet_energy_s1", "wavelet_energy_s2", "wavelet_energy_s3",
+            "wavelet_energy_s4", "wavelet_energy_s5", "wavelet_entropy",
+            "extreme_value_index", "tail_dependence", "copula_dependence",
+            "rank_correlation", "ml_derived_volatility", "ml_derived_trend",
+            "order_book_imbalance_proxy", "depth_pressure",
+            "herding_behavior", "overreaction_score",
+            "morning_session", "afternoon_session", "night_session",
+            "session_vol_ratio", "hour_seasonality", "weekday_seasonality",
+            "cumulant_3", "cumulant_4", "z_score_of_z_scores",
+            "network_centrality", "community_strength",
+        }
+        assert batch4.issubset(all_output_names), f"Missing: {batch4 - all_output_names}"
+
+    def test_compute_all_features_includes_batch4(self):
+        from features.feature_engineering import compute_all_features
+        df = _make_batch4_df(300)
+        features_df = compute_all_features(df, period="5min")
+        batch4_cols = [
+            "spectral_ratio", "dominant_frequency",
+            "wavelet_energy_s1", "wavelet_energy_s2", "wavelet_energy_s3",
+            "wavelet_energy_s4", "wavelet_energy_s5", "wavelet_entropy",
+            "extreme_value_index", "tail_dependence", "copula_dependence",
+            "rank_correlation", "ml_derived_volatility", "ml_derived_trend",
+            "order_book_imbalance_proxy", "depth_pressure",
+            "herding_behavior", "overreaction_score",
+            "morning_session", "afternoon_session", "night_session",
+            "session_vol_ratio", "hour_seasonality", "weekday_seasonality",
+            "cumulant_3", "cumulant_4", "z_score_of_z_scores",
+            "network_centrality", "community_strength",
+        ]
+        for feat in batch4_cols:
+            assert feat in features_df.columns, f"Missing from compute_all_features: {feat}"
+
+    def test_no_look_ahead_overreaction(self):
+        """Verify overreaction_score at each index i depends only on data[:i+1]."""
+        from features.custom_features import compute_overreaction_score
+        df = _make_batch4_df(300)
+        full = compute_overreaction_score(df)["overreaction_score"]
+        # Check several indices: value should match when computed on truncated data
+        for i in [150, 200, 250]:
+            trunc = df.iloc[:i + 1]
+            trunc_val = compute_overreaction_score(trunc)["overreaction_score"].iloc[i]
+            assert np.isclose(full.iloc[i], trunc_val, equal_nan=True), (
+                f"Look-ahead detected at index {i}: full={full.iloc[i]}, trunc={trunc_val}"
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
