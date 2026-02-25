@@ -283,3 +283,55 @@ def _rolling_slope(y, window):                                    # [新增]
     """                                                           # [新增]
     arr = np.asarray(y, dtype=np.float64)                         # [新增]
     return _rolling_slope_numba(arr, window)                      # [新增]
+
+
+@_njit(cache=True)                                                # [新增]
+def _rolling_autocorr_numba(arr, window, lag=1):                  # [新增]
+    """Numba加速的滚动自相关系数计算。
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        输入数组 (float64)
+    window : int
+        窗口大小
+    lag : int
+        滞后阶数
+
+    Returns
+    -------
+    np.ndarray
+        滚动自相关系数
+    """                                                           # [新增]
+    n = len(arr)                                                  # [新增]
+    out = np.full(n, np.nan, dtype=np.float64)                    # [新增]
+                                                                  # [新增]
+    for i in range(window, n):                                    # [新增]
+        y = arr[i - window: i]                                    # [新增]
+                                                                  # [新增]
+        has_nan = False                                           # [新增]
+        for j in range(window):                                   # [新增]
+            if np.isnan(y[j]):                                    # [新增]
+                has_nan = True                                    # [新增]
+                break                                             # [新增]
+        if has_nan:                                               # [新增]
+            continue                                              # [新增]
+                                                                  # [新增]
+        mean = 0.0                                                # [新增]
+        for j in range(window):                                   # [新增]
+            mean += y[j]                                          # [新增]
+        mean /= window                                            # [新增]
+                                                                  # [新增]
+        var = 0.0                                                 # [新增]
+        for j in range(window):                                   # [新增]
+            var += (y[j] - mean) ** 2                             # [新增]
+        if var < 1e-12:                                           # [新增]
+            continue                                              # [新增]
+                                                                  # [新增]
+        cov = 0.0                                                 # [新增]
+        for j in range(window - lag):                             # [新增]
+            cov += (y[j] - mean) * (y[j + lag] - mean)           # [新增]
+                                                                  # [新增]
+        out[i] = cov / var                                        # [新增]
+                                                                  # [新增]
+    return out                                                    # [新增]

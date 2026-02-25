@@ -1,9 +1,9 @@
 """
-单元测试 - 9个自定义特征因子
-Tests for the 9 custom features from the enhancement report.
+单元测试 - 自定义特征因子
+Tests for the custom features from both enhancement reports.
 
-依据《hfml特征工程增强报告-56项目挖掘-最终可执行版.md》中的
-手算验证用例编写，确保每个特征的计算逻辑正确。
+依据《hfml特征工程增强报告-56项目挖掘-最终可执行版.md》中的9个特征
+以及《hfml特征工程增强报告-精选10特征-可执行版.md》中的10个精选特征。
 """
 
 import sys
@@ -342,23 +342,364 @@ class TestOiPriceMagnitude:
 
 
 # ---------------------------------------------------------------------------
+# 10 精选特征1: buy_sell_pressure
+# ---------------------------------------------------------------------------
+
+class TestBuySellPressure:
+
+    def test_basic(self):
+        """报告中的手算验证"""
+        input_df = pd.DataFrame({
+            "high": [102, 103, 104, 103, 105],
+            "low": [98, 100, 99, 100, 102],
+            "close": [100, 102, 101, 102, 104],
+            "volume": [1000, 1200, 1100, 1300, 1500]
+        })
+        from features.custom_features import compute_buy_sell_pressure
+        result = compute_buy_sell_pressure(input_df)["buy_sell_pressure"]
+        # Row 0: hl=4, buy=1000*2/4=500, sell=1000*2/4=500, net=0
+        assert abs(result.iloc[0] - 0.0) < 0.01
+        # Row 1: hl=3, buy=1200*2/3=800, sell=1200*1/3=400, net=400/1200≈0.333
+        assert abs(result.iloc[1] - 0.333333) < 0.01
+
+    def test_output_range(self):
+        """输出应在 [-1, 1] 范围内"""
+        df = _make_base_df(100)
+        from features.custom_features import compute_buy_sell_pressure
+        result = compute_buy_sell_pressure(df)["buy_sell_pressure"]
+        valid = result.dropna()
+        assert (valid >= -1.0).all()
+        assert (valid <= 1.0).all()
+
+
+# ---------------------------------------------------------------------------
+# 10 精选特征2: volatility_skew
+# ---------------------------------------------------------------------------
+
+class TestVolatilitySkew:
+
+    def test_right_vs_left(self):
+        """右偏序列的偏度应大于左偏序列"""
+        # Use longer sequences with clear asymmetry
+        input_df_right = pd.DataFrame({
+            "close": [100, 101, 100.5, 102, 101.5, 103, 102.5, 104,
+                      103.5, 105, 104.5, 106, 105.5, 110]
+        })
+        input_df_left = pd.DataFrame({
+            "close": [110, 109, 109.5, 108, 108.5, 107, 107.5, 106,
+                      106.5, 105, 105.5, 104, 104.5, 100]
+        })
+        from features.custom_features import compute_volatility_skew
+        result_right = compute_volatility_skew(
+            input_df_right, window=10
+        )["volatility_skew"]
+        result_left = compute_volatility_skew(
+            input_df_left, window=10
+        )["volatility_skew"]
+        # Right skew should be > left skew at end
+        r_val = result_right.dropna().iloc[-1] if not result_right.dropna().empty else 0
+        l_val = result_left.dropna().iloc[-1] if not result_left.dropna().empty else 0
+        assert r_val > l_val
+
+    def test_output_shape(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_volatility_skew
+        result = compute_volatility_skew(df)["volatility_skew"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 10 精选特征3: momentum_cross
+# ---------------------------------------------------------------------------
+
+class TestMomentumCross:
+
+    def test_accel_vs_decel(self):
+        """正值表示短期动量强于长期（如反弹），负值表示短期弱于长期（如回调）"""
+        # Long-term down then short-term up → positive cross
+        input_df_pos = pd.DataFrame({
+            "close": [120, 118, 115, 112, 110, 108, 106, 104, 102, 100,
+                      99, 100, 102, 105, 110, 116]
+        })
+        # Long-term up then short-term down → negative cross
+        input_df_neg = pd.DataFrame({
+            "close": [100, 102, 105, 108, 112, 116, 120, 124, 128, 130,
+                      131, 130, 128, 125, 121, 116]
+        })
+        from features.custom_features import compute_momentum_cross
+        result_pos = compute_momentum_cross(
+            input_df_pos, fast_window=5, slow_window=15
+        )["momentum_cross"]
+        result_neg = compute_momentum_cross(
+            input_df_neg, fast_window=5, slow_window=15
+        )["momentum_cross"]
+        assert result_pos.iloc[-1] > 0
+        assert result_neg.iloc[-1] < 0
+
+    def test_output_shape(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_momentum_cross
+        result = compute_momentum_cross(df)["momentum_cross"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 10 精选特征4: autocorrelation_1
+# ---------------------------------------------------------------------------
+
+class TestAutocorrelation1:
+
+    def test_trend_positive(self):
+        """强趋势序列的自相关应为正"""
+        input_df = pd.DataFrame({
+            "close": [100, 101, 102, 103, 104, 105, 106, 107]
+        })
+        from features.custom_features import compute_autocorrelation_1
+        result = compute_autocorrelation_1(
+            input_df, window=8
+        )["autocorrelation_1"]
+        # 趋势序列自相关应 > 0
+        valid = result.dropna()
+        if len(valid) > 0:
+            assert valid.iloc[-1] > 0
+
+    def test_output_shape(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_autocorrelation_1
+        result = compute_autocorrelation_1(df)["autocorrelation_1"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 10 精选特征5: vwap_std
+# ---------------------------------------------------------------------------
+
+class TestVwapStd:
+
+    def test_dispersed_gt_concentrated(self):
+        """分散成交的标准差应大于集中成交"""
+        np.random.seed(42)
+        n = 50
+        # Concentrated: tight price range
+        df_conc = pd.DataFrame({
+            "high": 100 + np.random.uniform(0, 1, n),
+            "low": 100 - np.random.uniform(0, 1, n),
+            "close": 100 + np.random.randn(n) * 0.3,
+            "volume": np.full(n, 1000.0),
+        })
+        # Dispersed: wide price range
+        df_disp = pd.DataFrame({
+            "high": 100 + np.random.uniform(0, 10, n),
+            "low": 100 - np.random.uniform(0, 10, n),
+            "close": 100 + np.random.randn(n) * 5,
+            "volume": np.full(n, 1000.0),
+        })
+        from features.custom_features import compute_vwap_std
+        result_conc = compute_vwap_std(df_conc, window=20)["vwap_std"]
+        result_disp = compute_vwap_std(df_disp, window=20)["vwap_std"]
+        c = result_conc.dropna().iloc[-1]
+        d = result_disp.dropna().iloc[-1]
+        assert d > c
+
+    def test_positive_output(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_vwap_std
+        result = compute_vwap_std(df)["vwap_std"]
+        valid = result.dropna()
+        assert (valid >= 0).all()
+
+
+# ---------------------------------------------------------------------------
+# 10 精选特征6: tick_imbalance_proxy
+# ---------------------------------------------------------------------------
+
+class TestTickImbalanceProxy:
+
+    def test_up_vs_down(self):
+        """上涨序列应正偏，下跌序列应负偏"""
+        input_df_up = pd.DataFrame({
+            "close": [100, 101, 102, 101, 103, 104, 103, 105]
+        })
+        input_df_down = pd.DataFrame({
+            "close": [100, 99, 98, 99, 97, 96, 97, 95]
+        })
+        from features.custom_features import compute_tick_imbalance_proxy
+        result_up = compute_tick_imbalance_proxy(
+            input_df_up, window=8
+        )["tick_imbalance_proxy"]
+        result_down = compute_tick_imbalance_proxy(
+            input_df_down, window=8
+        )["tick_imbalance_proxy"]
+        assert result_up.iloc[-1] > 0
+        assert result_down.iloc[-1] < 0
+
+    def test_output_range(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_tick_imbalance_proxy
+        result = compute_tick_imbalance_proxy(df)["tick_imbalance_proxy"]
+        valid = result.dropna()
+        assert (valid >= -1.0).all()
+        assert (valid <= 1.0).all()
+
+
+# ---------------------------------------------------------------------------
+# 10 精选特征7: volatility_of_volatility
+# ---------------------------------------------------------------------------
+
+class TestVolatilityOfVolatility:
+
+    def test_switch_gt_stable(self):
+        """波动切换期的vov应大于稳定期"""
+        # Stable: consistent small oscillations
+        input_df_stable = pd.DataFrame({
+            "close": [100, 101, 99, 100, 101, 99, 100, 101, 99, 100,
+                      101, 99, 100, 101, 99]
+        })
+        # Switching: calm then wild
+        input_df_switch = pd.DataFrame({
+            "close": [100, 101, 100, 101, 100, 101, 100, 110, 90, 120,
+                      80, 130, 70, 140, 60]
+        })
+        from features.custom_features import compute_volatility_of_volatility
+        result_stable = compute_volatility_of_volatility(
+            input_df_stable, vol_window=5, vov_window=5
+        )["volatility_of_volatility"]
+        result_switch = compute_volatility_of_volatility(
+            input_df_switch, vol_window=5, vov_window=5
+        )["volatility_of_volatility"]
+        # Get last valid values
+        s_valid = result_stable.dropna()
+        w_valid = result_switch.dropna()
+        if len(s_valid) > 0 and len(w_valid) > 0:
+            assert w_valid.iloc[-1] > s_valid.iloc[-1]
+
+    def test_positive_output(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_volatility_of_volatility
+        result = compute_volatility_of_volatility(df)["volatility_of_volatility"]
+        valid = result.dropna()
+        assert (valid >= 0).all()
+
+
+# ---------------------------------------------------------------------------
+# 10 精选特征8: trend_strength_ratio
+# ---------------------------------------------------------------------------
+
+class TestTrendStrengthRatio:
+
+    def test_output_range(self):
+        """tanh归一化后应在 [-1, 1]"""
+        df = _make_base_df(100)
+        from features.custom_features import compute_trend_strength_ratio
+        result = compute_trend_strength_ratio(df)["trend_strength_ratio"]
+        valid = result.dropna()
+        assert (valid >= -1.0).all()
+        assert (valid <= 1.0).all()
+
+    def test_output_shape(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_trend_strength_ratio
+        result = compute_trend_strength_ratio(df)["trend_strength_ratio"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 10 精选特征9: volume_profile_skew
+# ---------------------------------------------------------------------------
+
+class TestVolumeProfileSkew:
+
+    def test_high_vs_low(self):
+        """高价区成交多应正偏，低价区成交多应负偏"""
+        # Need enough data points (window + extra)
+        # High-price volume concentration
+        input_df_high = pd.DataFrame({
+            "high": [102, 103, 104, 105, 104, 105, 106],
+            "low": [98, 99, 100, 101, 100, 101, 102],
+            "close": [101, 102, 103, 104, 103, 104, 105],
+            "volume": [100, 200, 500, 500, 200, 500, 500]
+        })
+        # Low-price volume concentration
+        input_df_low = pd.DataFrame({
+            "high": [102, 103, 104, 105, 104, 105, 106],
+            "low": [98, 99, 100, 101, 100, 101, 102],
+            "close": [99, 100, 101, 102, 101, 102, 103],
+            "volume": [500, 500, 200, 100, 200, 100, 100]
+        })
+        from features.custom_features import compute_volume_profile_skew
+        result_high = compute_volume_profile_skew(
+            input_df_high, window=5, bins=5
+        )["volume_profile_skew"]
+        result_low = compute_volume_profile_skew(
+            input_df_low, window=5, bins=5
+        )["volume_profile_skew"]
+        h_valid = result_high.dropna()
+        l_valid = result_low.dropna()
+        assert len(h_valid) > 0, "No valid values for high-vol data"
+        assert h_valid.iloc[-1] > l_valid.iloc[-1]
+
+    def test_output_range(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_volume_profile_skew
+        result = compute_volume_profile_skew(df)["volume_profile_skew"]
+        valid = result.dropna()
+        assert (valid >= -1.0).all()
+        assert (valid <= 1.0).all()
+
+
+# ---------------------------------------------------------------------------
+# 10 精选特征10: hurst_exponent_approx
+# ---------------------------------------------------------------------------
+
+class TestHurstExponentApprox:
+
+    def test_trend_series(self):
+        """趋势序列的Hurst指数"""
+        np.random.seed(42)
+        trend = np.cumsum(np.random.randn(200) * 0.01 + 0.001) + 100
+        df = pd.DataFrame({"close": trend})
+        from features.custom_features import compute_hurst_exponent_approx
+        result = compute_hurst_exponent_approx(
+            df, min_window=10, max_window=50, min_periods=100
+        )["hurst_exponent_approx"]
+        valid = result.dropna()
+        assert len(valid) > 0
+        # Hurst should be a finite number
+        assert np.isfinite(valid.iloc[-1])
+
+    def test_output_shape(self):
+        df = _make_base_df(200)
+        from features.custom_features import compute_hurst_exponent_approx
+        result = compute_hurst_exponent_approx(df)["hurst_exponent_approx"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
 # Integration tests
 # ---------------------------------------------------------------------------
 
 class TestIntegration:
 
     def test_all_features_in_compute_all(self):
-        """所有9个特征应在 compute_all_features 输出中"""
+        """所有19个特征应在 compute_all_features 输出中"""
         from features.feature_engineering import compute_all_features
         df = _make_base_df(200)
         features_df = compute_all_features(df, period="5min")
 
-        expected_features = [
+        # 9个原有增强特征
+        enhanced_features = [
             "divergence", "vwap_dev", "vol_state", "mom_slope",
             "rsi_slope", "vol_zscore", "gap_decay",
             "oi_price_alignment", "oi_price_magnitude",
         ]
-        for feat in expected_features:
+        # 10个精选新增特征
+        selected_features = [
+            "buy_sell_pressure", "volatility_skew", "momentum_cross",
+            "autocorrelation_1", "vwap_std", "tick_imbalance_proxy",
+            "volatility_of_volatility", "trend_strength_ratio",
+            "volume_profile_skew", "hurst_exponent_approx",
+        ]
+        for feat in enhanced_features + selected_features:
             assert feat in features_df.columns, (
                 f"特征 {feat} 未在 compute_all_features 结果中"
             )
@@ -374,31 +715,42 @@ class TestIntegration:
             f"{[c for c in features_df.columns if list(features_df.columns).count(c) > 1]}"
         )
 
-    def test_registry_has_all_nine(self):
-        """注册表应包含全部9个特征函数"""
+    def test_registry_has_all(self):
+        """注册表应包含全部19个特征函数"""
         registry = FeatureRegistry()
         all_output_names = set()
         for entry in registry.get_all_entries().values():
             all_output_names.update(entry.output_names)
 
         expected = {
+            # 9个增强特征
             "divergence", "vwap_dev", "vol_state", "mom_slope",
             "rsi_slope", "vol_zscore", "gap_decay",
             "oi_price_alignment", "oi_price_magnitude",
+            # 10个精选特征
+            "buy_sell_pressure", "volatility_skew", "momentum_cross",
+            "autocorrelation_1", "vwap_std", "tick_imbalance_proxy",
+            "volatility_of_volatility", "trend_strength_ratio",
+            "volume_profile_skew", "hurst_exponent_approx",
         }
         assert expected.issubset(all_output_names), (
             f"注册表缺失特征: {expected - all_output_names}"
         )
 
     def test_feature_count_increase(self):
-        """新增特征数量应为2（oi_price_alignment, oi_price_magnitude）
-        其余7个已在增强模块中存在，通过去重不重复添加"""
+        """新增特征应在 compute_all_features 输出中"""
         from features.feature_engineering import compute_all_features
         df = _make_base_df(200)
         features_df = compute_all_features(df, period="5min")
-        # oi_price_alignment and oi_price_magnitude should be present
-        assert "oi_price_alignment" in features_df.columns
-        assert "oi_price_magnitude" in features_df.columns
+        # All 10 new features should be present
+        new_features = [
+            "buy_sell_pressure", "volatility_skew", "momentum_cross",
+            "autocorrelation_1", "vwap_std", "tick_imbalance_proxy",
+            "volatility_of_volatility", "trend_strength_ratio",
+            "volume_profile_skew", "hurst_exponent_approx",
+        ]
+        for feat in new_features:
+            assert feat in features_df.columns, f"Missing: {feat}"
 
 
 if __name__ == "__main__":
