@@ -4,6 +4,7 @@ Tests for the custom features from both enhancement reports.
 
 依据《hfml特征工程增强报告-56项目挖掘-最终可执行版.md》中的9个特征
 以及《hfml特征工程增强报告-精选10特征-可执行版.md》中的10个精选特征。
+依据《hfml特征工程增强报告-精选20特征-第二辑.md》集成的20+1个精选特征。
 """
 
 import sys
@@ -675,13 +676,503 @@ class TestHurstExponentApprox:
 
 
 # ---------------------------------------------------------------------------
+# 第二辑特征1: parkinson_volatility
+# ---------------------------------------------------------------------------
+
+class TestParkinsonVolatility:
+
+    def test_basic(self):
+        input_df = pd.DataFrame({
+            "high": [101, 102, 103, 104, 103],
+            "low": [99, 100, 101, 102, 101]
+        })
+        from features.custom_features import compute_parkinson_volatility
+        result = compute_parkinson_volatility(input_df, window=3)["parkinson_volatility"]
+        assert not result.isna().all()
+        assert result.iloc[-1] > 0
+
+    def test_positive_output(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_parkinson_volatility
+        result = compute_parkinson_volatility(df)["parkinson_volatility"]
+        valid = result.dropna()
+        assert (valid > 0).all()
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征2: rogers_satchell_vol
+# ---------------------------------------------------------------------------
+
+class TestRogersSatchellVol:
+
+    def test_basic(self):
+        input_df = pd.DataFrame({
+            "open": [100, 101, 102, 103, 102],
+            "high": [102, 103, 104, 105, 104],
+            "low": [98, 99, 100, 101, 100],
+            "close": [101, 102, 103, 104, 103]
+        })
+        from features.custom_features import compute_rogers_satchell_vol
+        result = compute_rogers_satchell_vol(input_df, window=3)["rogers_satchell_vol"]
+        valid = result.dropna()
+        assert len(valid) > 0
+        assert (valid > 0).all()
+
+    def test_output_shape(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_rogers_satchell_vol
+        result = compute_rogers_satchell_vol(df)["rogers_satchell_vol"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征3: yang_zhang_vol
+# ---------------------------------------------------------------------------
+
+class TestYangZhangVol:
+
+    def test_basic(self):
+        input_df = pd.DataFrame({
+            "open": [100, 101, 102, 103, 102, 101],
+            "high": [102, 103, 104, 105, 104, 103],
+            "low": [98, 99, 100, 101, 100, 99],
+            "close": [101, 102, 103, 104, 103, 102]
+        })
+        from features.custom_features import compute_yang_zhang_vol
+        result = compute_yang_zhang_vol(input_df, window=3)["yang_zhang_vol"]
+        valid = result.dropna()
+        assert len(valid) > 0
+
+    def test_positive_output(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_yang_zhang_vol
+        result = compute_yang_zhang_vol(df)["yang_zhang_vol"]
+        valid = result.dropna()
+        assert (valid >= 0).all()
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征4: roll_impact
+# ---------------------------------------------------------------------------
+
+class TestRollImpact:
+
+    def test_basic(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_roll_impact
+        result = compute_roll_impact(df)["roll_impact"]
+        valid = result.dropna()
+        assert len(valid) > 0
+        assert (valid >= 0).all()
+
+    def test_output_shape(self):
+        df = _make_base_df(50)
+        from features.custom_features import compute_roll_impact
+        result = compute_roll_impact(df)["roll_impact"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征5: amihud_illiquidity
+# ---------------------------------------------------------------------------
+
+class TestAmihudIlliquidity:
+
+    def test_basic(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_amihud_illiquidity
+        result = compute_amihud_illiquidity(df)["amihud_illiquidity"]
+        valid = result.dropna()
+        assert len(valid) > 0
+        assert (valid >= 0).all()
+
+    def test_output_shape(self):
+        df = _make_base_df(50)
+        from features.custom_features import compute_amihud_illiquidity
+        result = compute_amihud_illiquidity(df)["amihud_illiquidity"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征6: pastor_stambaugh
+# ---------------------------------------------------------------------------
+
+class TestPastorStambaugh:
+
+    def test_basic(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_pastor_stambaugh
+        result = compute_pastor_stambaugh(df)["pastor_stambaugh"]
+        valid = result.dropna()
+        assert len(valid) > 0
+
+    def test_output_shape(self):
+        df = _make_base_df(50)
+        from features.custom_features import compute_pastor_stambaugh
+        result = compute_pastor_stambaugh(df)["pastor_stambaugh"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征7: roll_spread_estimate
+# ---------------------------------------------------------------------------
+
+class TestRollSpreadEstimate:
+
+    def test_basic(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_roll_spread_estimate
+        result = compute_roll_spread_estimate(df)["roll_spread_estimate"]
+        valid = result.dropna()
+        assert len(valid) > 0
+        assert (valid >= 0).all()
+
+    def test_output_shape(self):
+        df = _make_base_df(50)
+        from features.custom_features import compute_roll_spread_estimate
+        result = compute_roll_spread_estimate(df)["roll_spread_estimate"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征8: corwin_schultz_spread
+# ---------------------------------------------------------------------------
+
+class TestCorwinSchultzSpread:
+
+    def test_basic(self):
+        input_df = pd.DataFrame({
+            "high": [102, 103, 104, 105, 104],
+            "low": [98, 99, 100, 101, 100]
+        })
+        from features.custom_features import compute_corwin_schultz_spread
+        result = compute_corwin_schultz_spread(input_df)["corwin_schultz_spread"]
+        # First row NaN, rest may or may not have values
+        assert len(result) == len(input_df)
+
+    def test_non_negative(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_corwin_schultz_spread
+        result = compute_corwin_schultz_spread(df)["corwin_schultz_spread"]
+        valid = result.dropna()
+        assert (valid >= 0).all()
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征9: volume_synchronized_vol
+# ---------------------------------------------------------------------------
+
+class TestVolumeSynchronizedVol:
+
+    def test_basic(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_volume_synchronized_vol
+        result = compute_volume_synchronized_vol(df)["volume_synchronized_vol"]
+        valid = result.dropna()
+        assert len(valid) > 0
+        assert (valid >= 0).all()
+
+    def test_output_shape(self):
+        df = _make_base_df(50)
+        from features.custom_features import compute_volume_synchronized_vol
+        result = compute_volume_synchronized_vol(df)["volume_synchronized_vol"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征10: volume_weighted_atr
+# ---------------------------------------------------------------------------
+
+class TestVolumeWeightedAtr:
+
+    def test_basic(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_volume_weighted_atr
+        result = compute_volume_weighted_atr(df)["volume_weighted_atr"]
+        valid = result.dropna()
+        assert len(valid) > 0
+        assert (valid >= 0).all()
+
+    def test_with_tr(self):
+        """Test with precomputed tr in features_df"""
+        df = _make_base_df(100)
+        tr = np.maximum(
+            df["high"] - df["low"],
+            np.maximum(
+                abs(df["high"] - df["close"].shift(1)),
+                abs(df["low"] - df["close"].shift(1))
+            )
+        )
+        features_df = pd.DataFrame({"tr": tr})
+        from features.custom_features import compute_volume_weighted_atr
+        result = compute_volume_weighted_atr(df, features_df=features_df)["volume_weighted_atr"]
+        valid = result.dropna()
+        assert (valid >= 0).all()
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征11: serial_correlation
+# ---------------------------------------------------------------------------
+
+class TestSerialCorrelation:
+
+    def test_trend_positive(self):
+        """强趋势序列自相关应为正"""
+        input_df = pd.DataFrame({
+            "close": [100.0 + i * 0.5 for i in range(50)]
+        })
+        from features.custom_features import compute_serial_correlation
+        result = compute_serial_correlation(input_df, window=20)["serial_correlation"]
+        valid = result.dropna()
+        if len(valid) > 0:
+            assert valid.iloc[-1] > 0
+
+    def test_output_shape(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_serial_correlation
+        result = compute_serial_correlation(df)["serial_correlation"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征12: partial_autocorrelation
+# ---------------------------------------------------------------------------
+
+class TestPartialAutocorrelation:
+
+    def test_basic(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_partial_autocorrelation
+        result = compute_partial_autocorrelation(df)["partial_autocorrelation"]
+        valid = result.dropna()
+        assert len(valid) > 0
+
+    def test_output_shape(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_partial_autocorrelation
+        result = compute_partial_autocorrelation(df)["partial_autocorrelation"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征13: variance_ratio
+# ---------------------------------------------------------------------------
+
+class TestVarianceRatio:
+
+    def test_basic(self):
+        df = _make_base_df(200)
+        from features.custom_features import compute_variance_ratio
+        result = compute_variance_ratio(df, q_periods=5, window=50)["variance_ratio"]
+        valid = result.dropna()
+        assert len(valid) > 0
+        assert (valid > 0).all()
+
+    def test_output_shape(self):
+        df = _make_base_df(200)
+        from features.custom_features import compute_variance_ratio
+        result = compute_variance_ratio(df)["variance_ratio"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征14: bid_ask_spread_proxy
+# ---------------------------------------------------------------------------
+
+class TestBidAskSpreadProxy:
+
+    def test_basic(self):
+        input_df = pd.DataFrame({
+            "high": [102, 103, 104],
+            "low": [98, 99, 100]
+        })
+        from features.custom_features import compute_bid_ask_spread_proxy
+        result = compute_bid_ask_spread_proxy(input_df)["bid_ask_spread_proxy"]
+        # (102-98)/100 = 0.04
+        assert abs(result.iloc[0] - 0.04) < 0.001
+        assert result.notna().all()
+
+    def test_positive_output(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_bid_ask_spread_proxy
+        result = compute_bid_ask_spread_proxy(df)["bid_ask_spread_proxy"]
+        assert (result >= 0).all()
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征15: effective_spread_proxy
+# ---------------------------------------------------------------------------
+
+class TestEffectiveSpreadProxy:
+
+    def test_basic(self):
+        input_df = pd.DataFrame({
+            "high": [102, 103, 104],
+            "low": [98, 99, 100],
+            "close": [100, 102, 101]
+        })
+        from features.custom_features import compute_effective_spread_proxy
+        result = compute_effective_spread_proxy(input_df)["effective_spread_proxy"]
+        # mid=(102+98)/2=100, close=100, spread=0
+        assert abs(result.iloc[0]) < 0.001
+        assert result.notna().all()
+
+    def test_non_negative(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_effective_spread_proxy
+        result = compute_effective_spread_proxy(df)["effective_spread_proxy"]
+        assert (result >= 0).all()
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征16: price_reversal_metric
+# ---------------------------------------------------------------------------
+
+class TestPriceReversalMetric:
+
+    def test_basic(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_price_reversal_metric
+        result = compute_price_reversal_metric(df)["price_reversal_metric"]
+        valid = result.dropna()
+        assert len(valid) > 0
+
+    def test_output_shape(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_price_reversal_metric
+        result = compute_price_reversal_metric(df)["price_reversal_metric"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征17: volume_price_correlation
+# ---------------------------------------------------------------------------
+
+class TestVolumePriceCorrelation:
+
+    def test_positive_corr(self):
+        """价涨量增应正相关"""
+        input_df = pd.DataFrame({
+            "close": [100.0, 101, 102, 103, 104, 105, 106, 107, 108, 109],
+            "volume": [100.0, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+        })
+        from features.custom_features import compute_volume_price_correlation
+        result = compute_volume_price_correlation(input_df, window=8)["volume_price_correlation"]
+        valid = result.dropna()
+        if len(valid) > 0:
+            assert valid.iloc[-1] > 0
+
+    def test_output_range(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_volume_price_correlation
+        result = compute_volume_price_correlation(df)["volume_price_correlation"]
+        valid = result.dropna()
+        assert (valid >= -1.0).all()
+        assert (valid <= 1.0).all()
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征18: open_interest_momentum
+# ---------------------------------------------------------------------------
+
+class TestOpenInterestMomentum:
+
+    def test_basic(self):
+        input_df = pd.DataFrame({
+            "open_interest": [1000, 1010, 1030, 1060, 1100, 1150, 1210]
+        })
+        from features.custom_features import compute_open_interest_momentum
+        result = compute_open_interest_momentum(input_df, fast_window=2, slow_window=5)["open_interest_momentum"]
+        assert len(result) == len(input_df)
+
+    def test_output_shape(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_open_interest_momentum
+        result = compute_open_interest_momentum(df)["open_interest_momentum"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征19: long_short_ratio_proxy
+# ---------------------------------------------------------------------------
+
+class TestLongShortRatioProxy:
+
+    def test_long_dominant(self):
+        """价涨+OI增应为正"""
+        input_df = pd.DataFrame({
+            "close": [100, 101, 102, 103, 104],
+            "open_interest": [1000, 1010, 1020, 1030, 1040]
+        })
+        from features.custom_features import compute_long_short_ratio_proxy
+        result = compute_long_short_ratio_proxy(input_df, smooth_window=2)["long_short_ratio_proxy"]
+        valid = result.dropna()
+        if len(valid) > 0:
+            assert valid.iloc[-1] > 0
+
+    def test_output_shape(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_long_short_ratio_proxy
+        result = compute_long_short_ratio_proxy(df)["long_short_ratio_proxy"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑特征20: kurtosis_returns (herfindahl_volume was replaced by kurtosis)
+# ---------------------------------------------------------------------------
+
+class TestKurtosisReturns:
+
+    def test_basic(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_kurtosis_returns
+        result = compute_kurtosis_returns(df)["kurtosis_returns"]
+        valid = result.dropna()
+        assert len(valid) > 0
+        assert (valid > 0).all()  # kurtosis is always positive
+
+    def test_output_shape(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_kurtosis_returns
+        result = compute_kurtosis_returns(df)["kurtosis_returns"]
+        assert len(result) == len(df)
+
+
+# ---------------------------------------------------------------------------
+# 第二辑bonus: herfindahl_volume
+# ---------------------------------------------------------------------------
+
+class TestHerfindahlVolume:
+
+    def test_basic(self):
+        df = _make_base_df(100)
+        from features.custom_features import compute_herfindahl_volume
+        result = compute_herfindahl_volume(df)["herfindahl_volume"]
+        valid = result.dropna()
+        assert len(valid) > 0
+        # Herfindahl is in (0, 1] for window > 1
+        assert (valid > 0).all()
+        assert (valid <= 1).all()
+
+    def test_uniform_volume(self):
+        """Uniform volume should give HHI = 1/window"""
+        df = pd.DataFrame({"volume": np.full(50, 100.0)})
+        from features.custom_features import compute_herfindahl_volume
+        result = compute_herfindahl_volume(df, window=20)["herfindahl_volume"]
+        valid = result.dropna()
+        # HHI = 20 * (1/20)^2 = 1/20 = 0.05
+        for v in valid:
+            assert abs(v - 0.05) < 0.001
+
+
+# ---------------------------------------------------------------------------
 # Integration tests
 # ---------------------------------------------------------------------------
 
 class TestIntegration:
 
     def test_all_features_in_compute_all(self):
-        """所有19个特征应在 compute_all_features 输出中"""
+        """所有19+21个特征应在 compute_all_features 输出中"""
         from features.feature_engineering import compute_all_features
         df = _make_base_df(200)
         features_df = compute_all_features(df, period="5min")
@@ -699,7 +1190,18 @@ class TestIntegration:
             "volatility_of_volatility", "trend_strength_ratio",
             "volume_profile_skew", "hurst_exponent_approx",
         ]
-        for feat in enhanced_features + selected_features:
+        # 20+1个第二辑精选特征
+        second_batch_features = [
+            "parkinson_volatility", "rogers_satchell_vol", "yang_zhang_vol",
+            "roll_impact", "amihud_illiquidity", "pastor_stambaugh",
+            "roll_spread_estimate", "corwin_schultz_spread",
+            "volume_synchronized_vol", "volume_weighted_atr",
+            "serial_correlation", "partial_autocorrelation", "variance_ratio",
+            "bid_ask_spread_proxy", "effective_spread_proxy", "price_reversal_metric",
+            "volume_price_correlation", "open_interest_momentum", "long_short_ratio_proxy",
+            "kurtosis_returns", "herfindahl_volume",
+        ]
+        for feat in enhanced_features + selected_features + second_batch_features:
             assert feat in features_df.columns, (
                 f"特征 {feat} 未在 compute_all_features 结果中"
             )
@@ -716,7 +1218,7 @@ class TestIntegration:
         )
 
     def test_registry_has_all(self):
-        """注册表应包含全部19个特征函数"""
+        """注册表应包含全部19+21个特征函数"""
         registry = FeatureRegistry()
         all_output_names = set()
         for entry in registry.get_all_entries().values():
@@ -732,6 +1234,15 @@ class TestIntegration:
             "autocorrelation_1", "vwap_std", "tick_imbalance_proxy",
             "volatility_of_volatility", "trend_strength_ratio",
             "volume_profile_skew", "hurst_exponent_approx",
+            # 20+1个第二辑精选特征
+            "parkinson_volatility", "rogers_satchell_vol", "yang_zhang_vol",
+            "roll_impact", "amihud_illiquidity", "pastor_stambaugh",
+            "roll_spread_estimate", "corwin_schultz_spread",
+            "volume_synchronized_vol", "volume_weighted_atr",
+            "serial_correlation", "partial_autocorrelation", "variance_ratio",
+            "bid_ask_spread_proxy", "effective_spread_proxy", "price_reversal_metric",
+            "volume_price_correlation", "open_interest_momentum", "long_short_ratio_proxy",
+            "kurtosis_returns", "herfindahl_volume",
         }
         assert expected.issubset(all_output_names), (
             f"注册表缺失特征: {expected - all_output_names}"
@@ -742,12 +1253,20 @@ class TestIntegration:
         from features.feature_engineering import compute_all_features
         df = _make_base_df(200)
         features_df = compute_all_features(df, period="5min")
-        # All 10 new features should be present
+        # All 10 first-batch + 20+1 second-batch new features should be present
         new_features = [
             "buy_sell_pressure", "volatility_skew", "momentum_cross",
             "autocorrelation_1", "vwap_std", "tick_imbalance_proxy",
             "volatility_of_volatility", "trend_strength_ratio",
             "volume_profile_skew", "hurst_exponent_approx",
+            "parkinson_volatility", "rogers_satchell_vol", "yang_zhang_vol",
+            "roll_impact", "amihud_illiquidity", "pastor_stambaugh",
+            "roll_spread_estimate", "corwin_schultz_spread",
+            "volume_synchronized_vol", "volume_weighted_atr",
+            "serial_correlation", "partial_autocorrelation", "variance_ratio",
+            "bid_ask_spread_proxy", "effective_spread_proxy", "price_reversal_metric",
+            "volume_price_correlation", "open_interest_momentum", "long_short_ratio_proxy",
+            "kurtosis_returns", "herfindahl_volume",
         ]
         for feat in new_features:
             assert feat in features_df.columns, f"Missing: {feat}"
