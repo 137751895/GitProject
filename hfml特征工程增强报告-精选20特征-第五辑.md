@@ -958,8 +958,7 @@ def compute_mutual_information(df, features_df=None, window=100, lag=5, bins=20,
     close = df["close"].values.astype(np.float64)
     
     # 计算收益率
-    returns = np.zeros(len(close))
-    returns[0] = np.nan
+    returns = np.full(len(close), np.nan)
     for i in range(1, len(close)):
         if close[i-1] > 0:
             returns[i] = (close[i] - close[i-1]) / close[i-1]
@@ -968,18 +967,19 @@ def compute_mutual_information(df, features_df=None, window=100, lag=5, bins=20,
     result = np.full(n, np.nan)
     
     for i in range(window + lag, n):
-        x = returns[i - window + 1 : i - lag + 1]
-        y = returns[i - lag + 1 : i + 1]
+        # 对齐长度为window：x为滞后序列，y为当前序列
+        x = returns[i - window - lag + 1 : i - lag + 1]
+        y = returns[i - window + 1 : i + 1]
         
         # 检查NaN
         valid_x = []
         valid_y = []
-        for j in range(window - lag):
+        for j in range(window):
             if not np.isnan(x[j]) and not np.isnan(y[j]):
                 valid_x.append(x[j])
                 valid_y.append(y[j])
         
-        if len(valid_x) > 30:
+        if len(valid_x) > max(30, bins * 2):
             result[i] = _mutual_information_numba(
                 np.array(valid_x), np.array(valid_y), bins
             )
@@ -988,6 +988,68 @@ def compute_mutual_information(df, features_df=None, window=100, lag=5, bins=20,
 ```
 
 ---
+
+    #### 特征 6：`transfer_entropy`（传递熵）
+
+    ##### 1. 元数据
+    - **特征类别**：信息论
+    - **优先级**：P2
+    - **理论依据**：传递熵衡量历史状态对当前收益的信息增益，能刻画方向性依赖。
+
+    ##### 2. 计算公式
+    ```
+    TE(Y→X) = Σ p(x_t, x_{t-1}, y_{t-1}) log [ p(x_t|x_{t-1},y_{t-1}) / p(x_t|x_{t-1}) ]
+    ```
+
+    ##### 3. 依赖列
+    - `close`
+
+    ##### 4. 参数建议
+    - `window`：默认 100（建议范围 50~200）
+    - `lag`：默认 1
+    - `bins`：默认 10
+
+    ##### 5. 集成代码
+    ```python
+    @register_feature(
+        group="信息论",
+        level="level6_transforms",
+        description="传递熵，衡量滞后状态对当前收益的信息增益",
+        depends_on=[],
+        output_names=["transfer_entropy"]
+    )
+    def compute_transfer_entropy(df, features_df=None, window=100, lag=1, bins=10, **kwargs):
+        close = df["close"].values.astype(np.float64)
+
+        returns = np.full(len(close), np.nan)
+        for i in range(1, len(close)):
+            if close[i - 1] > 0:
+                returns[i] = (close[i] - close[i - 1]) / close[i - 1]
+
+        n = len(returns)
+        result = np.full(n, np.nan)
+
+        for i in range(window + lag, n):
+            # 单品种场景下使用收益率自传递熵代理
+            x = returns[i - window + 1 : i + 1]
+            y = returns[i - window + 1 : i + 1]
+
+            valid_x = []
+            valid_y = []
+            for j in range(window):
+                if not np.isnan(x[j]) and not np.isnan(y[j]):
+                    valid_x.append(x[j])
+                    valid_y.append(y[j])
+
+            if len(valid_x) > 30:
+                result[i] = _transfer_entropy_numba(
+                    np.array(valid_x), np.array(valid_y), lag=lag, bins=bins
+                )
+
+        return pd.DataFrame({"transfer_entropy": result}, index=df.index)
+    ```
+
+    ---
 
 ### 3.4 风险测度类（Risk Measures）
 
@@ -1151,8 +1213,7 @@ def compute_liquidity_adjusted_var(df, features_df=None, window=50, confidence_l
     volume = df["volume"].values.astype(np.float64)
     
     # 计算收益率
-    returns = np.zeros(len(close))
-    returns[0] = np.nan
+    returns = np.full(len(close), np.nan)
     for i in range(1, len(close)):
         if close[i-1] > 0:
             returns[i] = (close[i] - close[i-1]) / close[i-1]
@@ -1165,35 +1226,28 @@ def compute_liquidity_adjusted_var(df, features_df=None, window=50, confidence_l
         ret_window = returns[i - window + 1 : i + 1]
         vol_window = volume[i - window + 1 : i + 1]
         
-        valid_returns = []
-        valid_vol = []
+        valid_idx = []
         for j in range(window):
             if not np.isnan(ret_window[j]) and not np.isnan(vol_window[j]):
-                valid_returns.append(ret_window[j])
-                valid_vol.append(vol_window[j])
+                valid_idx.append(j)
         
-        if len(valid_returns) < window // 2:
+        if len(valid_idx) < window // 2:
             continue
+
+        valid_returns = np.array([ret_window[j] for j in valid_idx])
+        valid_vol = np.array([vol_window[j] for j in valid_idx])
         
         # VaR计算
         sorted_ret = np.sort(valid_returns)
-        n_valid = len(sorted_ret)
-        var_idx = int(n_valid * (1 - confidence_level))
-        if var_idx >= n_valid:
-            var_idx = n_valid - 1
+        var_idx = min(int(len(sorted_ret) * (1 - confidence_level)), len(sorted_ret) - 1)
         var = sorted_ret[var_idx]
-        
-        # 流动性成本估计（用Amihud非流动性指标）
-        avg_vol = 0.0
-        for vol in valid_vol:
-            avg_vol += vol
-        avg_vol /= len(valid_vol)
-        
-        if avg_vol > 0:
-            # 流动性成本与成交量成反比
-            liq_cost = 0.01 / np.sqrt(avg_vol / np.mean(valid_vol))
-            lvar = var * (1 + liq_cost)
-            result[i] = lvar
+
+        # 修复：使用“当前成交量相对历史中位量”构造流动性冲击，避免退化为常数
+        current_vol = max(valid_vol[-1], 1e-12)
+        median_vol = max(np.median(valid_vol), 1e-12)
+        liq_multiplier = np.sqrt(median_vol / current_vol)
+        liq_cost = 0.01 * liq_multiplier
+        result[i] = var * (1 + liq_cost)
     
     return pd.DataFrame({"liquidity_adjusted_var": result}, index=df.index)
 ```
@@ -1331,6 +1385,45 @@ def compute_price_discovery_ratio(df, features_df=None, window=20, **kwargs):
 
 ---
 
+    #### 特征 11：`cointegration_residual`（协整残差）
+
+    ##### 1. 元数据
+    - **特征类别**：统计套利
+    - **优先级**：P1
+    - **理论依据**：协整残差可衡量均值回复强度，残差平稳性越强，统计套利信号越可靠。
+
+    ##### 2. 计算公式
+    ```
+    y_t = α + β x_t + ε_t
+    cointegration_residual = -t_stat(Δε_t ~ ε_{t-1})
+    ```
+
+    ##### 3. 依赖列
+    - `close`（单品种代理使用 `close` 与 `EMA(close)`）
+
+    ##### 4. 参数建议
+    - `window`：默认 60（建议范围 30~120）
+
+    ##### 5. 集成代码
+    ```python
+    @register_feature(
+        group="统计套利",
+        level="level6_transforms",
+        description="协整残差（单品种代理：close 与 ema(close)）",
+        depends_on=[],
+        output_names=["cointegration_residual"]
+    )
+    def compute_cointegration_residual(df, features_df=None, window=60, **kwargs):
+        close = df["close"].values.astype(np.float64)
+        ema = pd.Series(close).ewm(span=max(5, window // 3), adjust=False).mean().values.astype(np.float64)
+
+        # 返回协整强度代理（基于简化ADF t统计量）
+        result = _cointegration_test_numba(close, ema, window)
+        return pd.DataFrame({"cointegration_residual": result}, index=df.index)
+    ```
+
+    ---
+
 
 
 #### 特征 12：`pairs_trading_signal`（配对交易信号）
@@ -1371,7 +1464,7 @@ def compute_pairs_trading_signal(df, features_df=None, window=60, entry_threshol
     
     n = len(residual)
     result = np.zeros(n)
-    position = 0  # 当前持仓状态
+    position = 0
     
     for i in range(window, n):
         # 计算滚动均值和标准差
@@ -1400,26 +1493,17 @@ def compute_pairs_trading_signal(df, features_df=None, window=60, entry_threshol
         
         z_score = (residual[i] - mean) / std
         
-        # 交易规则
+        # 交易规则（修复：平仓使用 abs(z) <= exit_threshold）
         if position == 0:
             if z_score > entry_threshold:
-                result[i] = -1  # 卖空
                 position = -1
             elif z_score < -entry_threshold:
-                result[i] = 1   # 买入
                 position = 1
-        elif position == 1:
-            if z_score > -exit_threshold:
-                result[i] = 0   # 平仓
+        else:
+            if abs(z_score) <= exit_threshold:
                 position = 0
-            else:
-                result[i] = 1   # 继续持有
-        elif position == -1:
-            if z_score < exit_threshold:
-                result[i] = 0   # 平仓
-                position = 0
-            else:
-                result[i] = -1  # 继续持有
+
+        result[i] = position
     
     return pd.DataFrame({"pairs_trading_signal": result}, index=df.index)
 ```
@@ -1996,22 +2080,13 @@ def _markov_regime_probability_numba(returns, window, transition_prob=0.95):
         # 估计转移概率
         p00 = n00 / (n00 + n01 + 1e-12)
         p11 = n11 / (n11 + n10 + 1e-12)
-        
-        # 计算稳态分布
-        if p00 + p11 > 0:
-            pi0 = (1 - p11) / (2 - p00 - p11)
-            pi1 = (1 - p00) / (2 - p00 - p11)
-            
-            # 基于最新波动率更新当前状态概率
-            current_vol = volatilities[-1]
-            if current_vol > vol_median:
-                # 高波动状态
-                prob_high = p11 * pi1 + (1 - p11) * pi1
-            else:
-                # 低波动状态
-                prob_high = (1 - p00) * pi1 + p00 * pi1
-            
-            result[i] = prob_high
+        p01 = 1.0 - p00
+
+        # 修复：使用一步马尔可夫更新，避免概率退化为常数
+        current_vol = volatilities[-1]
+        prev_prob_high = 1.0 if current_vol > vol_median else 0.0
+        prob_high = prev_prob_high * p11 + (1.0 - prev_prob_high) * p01
+        result[i] = prob_high
     
     return result
 
@@ -2034,6 +2109,290 @@ def compute_markov_regime_probability(df, features_df=None, window=100, transiti
     
     result = _markov_regime_probability_numba(returns, window, transition_prob)
     return pd.DataFrame({"markov_regime_probability": result}, index=df.index)
+```
+
+---
+
+## 四、逐因子审计结果（公式正确性 / 未来函数 / Bug修复）
+
+### 4.1 20个因子逐项审计结论
+
+| 序号 | 特征名 | 公式一致性 | 未来函数检查 | 结论 |
+| --- | --- | --- | --- | --- |
+| 1 | `lyapunov_exponent_refined` | 基本一致 | 未发现 | 通过 |
+| 2 | `correlation_dimension` | 基本一致 | 未发现 | 通过 |
+| 3 | `martingale_difference` | 基本一致 | 未发现 | 通过 |
+| 4 | `variance_ratio_test` | 基本一致 | 未发现 | 通过 |
+| 5 | `mutual_information` | **存在实现bug**（窗口切片错位） | 未发现 | **已修复** |
+| 6 | `transfer_entropy` | 文档缺少可直接注册实现 | 未发现 | **已补齐** |
+| 7 | `conditional_value_at_risk` | 基本一致 | 未发现 | 通过 |
+| 8 | `expected_shortfall` | 基本一致 | 未发现 | 通过 |
+| 9 | `market_microstructure_efficiency` | 基本一致 | 未发现 | 通过 |
+| 10 | `price_discovery_ratio` | 基本一致 | 未发现 | 通过 |
+| 11 | `cointegration_residual` | 文档缺少正式实现 | 未发现 | **已补齐** |
+| 12 | `pairs_trading_signal` | **存在逻辑bug**（平仓阈值条件） | 未发现 | **已修复** |
+| 13 | `chart_pattern_strength` | 基本一致 | 未发现 | 通过 |
+| 14 | `candlestick_pattern_score` | 基本一致 | 未发现 | 通过 |
+| 15 | `multifractal_spectrum` | 基本一致 | 未发现 | 通过 |
+| 16 | `liquidity_adjusted_var` | **流动性成本公式退化**（近似常数） | 未发现 | **已修复** |
+| 17 | `volatility_smile_slope` | 基本一致 | 未发现 | 通过 |
+| 18 | `term_structure_curvature` | 基本一致 | 未发现 | 通过 |
+| 19 | `bayesian_volatility` | 基本一致 | 未发现 | 通过 |
+| 20 | `markov_regime_probability` | **存在概率退化bug** | 未发现 | **已修复** |
+
+> 未来函数判定说明：上述实现均仅使用 `t` 及历史窗口 `[t-window+1, t]` 数据，未使用未来索引（如 `shift(-k)`）或前视切片。
+
+### 4.2 修复后的关键代码（可直接替换）
+
+#### 修复A：`mutual_information`（切片错位修复）
+
+```python
+@register_feature(
+    group="信息论",
+    level="level6_transforms",
+    description="互信息，衡量与自身延迟的非线性依赖",
+    depends_on=[],
+    output_names=["mutual_information"]
+)
+def compute_mutual_information(df, features_df=None, window=100, lag=5, bins=20, **kwargs):
+    close = df["close"].values.astype(np.float64)
+
+    returns = np.full(len(close), np.nan)
+    for i in range(1, len(close)):
+        if close[i - 1] > 0:
+            returns[i] = (close[i] - close[i - 1]) / close[i - 1]
+
+    n = len(returns)
+    result = np.full(n, np.nan)
+
+    # 在时点i，比较 r[t] 与 r[t-lag] 的互信息（t属于历史窗口）
+    for i in range(window + lag, n):
+        x = returns[i - window - lag + 1 : i - lag + 1]  # 历史滞后序列
+        y = returns[i - window + 1 : i + 1]              # 当前历史序列
+
+        valid_x = []
+        valid_y = []
+        for j in range(window):
+            if not np.isnan(x[j]) and not np.isnan(y[j]):
+                valid_x.append(x[j])
+                valid_y.append(y[j])
+
+        if len(valid_x) > max(30, bins * 2):
+            result[i] = _mutual_information_numba(np.array(valid_x), np.array(valid_y), bins)
+
+    return pd.DataFrame({"mutual_information": result}, index=df.index)
+```
+
+#### 修复B：`transfer_entropy`（补齐正式实现）
+
+```python
+@register_feature(
+    group="信息论",
+    level="level6_transforms",
+    description="传递熵，衡量滞后状态对当前收益的信息增益",
+    depends_on=[],
+    output_names=["transfer_entropy"]
+)
+def compute_transfer_entropy(df, features_df=None, window=100, lag=1, bins=10, **kwargs):
+    close = df["close"].values.astype(np.float64)
+
+    returns = np.full(len(close), np.nan)
+    for i in range(1, len(close)):
+        if close[i - 1] > 0:
+            returns[i] = (close[i] - close[i - 1]) / close[i - 1]
+
+    n = len(returns)
+    result = np.full(n, np.nan)
+
+    for i in range(window + lag, n):
+        # 单品种下用 r_t 对 r_t 的自传递熵代理（可扩展为外生序列）
+        x = returns[i - window + 1 : i + 1]
+        y = returns[i - window + 1 : i + 1]
+
+        valid_x = []
+        valid_y = []
+        for j in range(window):
+            if not np.isnan(x[j]) and not np.isnan(y[j]):
+                valid_x.append(x[j])
+                valid_y.append(y[j])
+
+        if len(valid_x) > 30:
+            result[i] = _transfer_entropy_numba(np.array(valid_x), np.array(valid_y), lag=lag, bins=bins)
+
+    return pd.DataFrame({"transfer_entropy": result}, index=df.index)
+```
+
+#### 修复C：`cointegration_residual`（补齐正式实现）
+
+```python
+@register_feature(
+    group="统计套利",
+    level="level6_transforms",
+    description="协整残差（单品种代理：close 与 ema(close)）",
+    depends_on=[],
+    output_names=["cointegration_residual"]
+)
+def compute_cointegration_residual(df, features_df=None, window=60, **kwargs):
+    close = df["close"].values.astype(np.float64)
+    ema = pd.Series(close).ewm(span=max(5, window // 3), adjust=False).mean().values.astype(np.float64)
+    result = _cointegration_test_numba(close, ema, window)
+    return pd.DataFrame({"cointegration_residual": result}, index=df.index)
+```
+
+#### 修复D：`pairs_trading_signal`（平仓条件修复）
+
+```python
+@register_feature(
+    group="统计套利",
+    level="level6_transforms",
+    description="配对交易信号，-1卖空，+1买入，0持有",
+    depends_on=["cointegration_residual"],
+    output_names=["pairs_trading_signal"]
+)
+def compute_pairs_trading_signal(df, features_df=None, window=60, entry_threshold=2.0, exit_threshold=0.5, **kwargs):
+    if features_df is None or "cointegration_residual" not in features_df.columns:
+        return pd.DataFrame({"pairs_trading_signal": np.nan}, index=df.index)
+
+    residual = features_df["cointegration_residual"].values.astype(np.float64)
+    n = len(residual)
+    result = np.zeros(n)
+    position = 0
+
+    for i in range(window, n):
+        res_window = residual[i - window + 1 : i + 1]
+        valid_res = [v for v in res_window if not np.isnan(v)]
+        if len(valid_res) < window // 2:
+            continue
+
+        mean = np.mean(valid_res)
+        std = np.std(valid_res)
+        if std < 1e-12 or np.isnan(residual[i]):
+            continue
+
+        z_score = (residual[i] - mean) / std
+
+        if position == 0:
+            if z_score > entry_threshold:
+                position = -1
+            elif z_score < -entry_threshold:
+                position = 1
+        else:
+            # 修复点：平仓应使用 abs(z) <= exit_threshold
+            if abs(z_score) <= exit_threshold:
+                position = 0
+
+        result[i] = position
+
+    return pd.DataFrame({"pairs_trading_signal": result}, index=df.index)
+```
+
+#### 修复E：`liquidity_adjusted_var`（流动性成本退化修复）
+
+```python
+@register_feature(
+    group="风险测度",
+    level="level5_cross",
+    description="流动性调整VaR，考虑平仓成本",
+    depends_on=[],
+    output_names=["liquidity_adjusted_var"]
+)
+def compute_liquidity_adjusted_var(df, features_df=None, window=50, confidence_level=0.95, **kwargs):
+    close = df["close"].values.astype(np.float64)
+    volume = df["volume"].values.astype(np.float64)
+
+    returns = np.full(len(close), np.nan)
+    for i in range(1, len(close)):
+        if close[i - 1] > 0:
+            returns[i] = (close[i] - close[i - 1]) / close[i - 1]
+
+    n = len(returns)
+    result = np.full(n, np.nan)
+
+    for i in range(window, n):
+        ret_window = returns[i - window + 1 : i + 1]
+        vol_window = volume[i - window + 1 : i + 1]
+        valid_idx = [j for j in range(window) if not np.isnan(ret_window[j]) and not np.isnan(vol_window[j])]
+        if len(valid_idx) < window // 2:
+            continue
+
+        valid_returns = np.array([ret_window[j] for j in valid_idx])
+        valid_vol = np.array([vol_window[j] for j in valid_idx])
+        sorted_ret = np.sort(valid_returns)
+        var_idx = min(int(len(sorted_ret) * (1 - confidence_level)), len(sorted_ret) - 1)
+        var = sorted_ret[var_idx]
+
+        # 修复点：用当前成交量相对历史中位量衡量流动性冲击
+        current_vol = max(valid_vol[-1], 1e-12)
+        median_vol = max(np.median(valid_vol), 1e-12)
+        liq_multiplier = np.sqrt(median_vol / current_vol)
+        liq_cost = 0.01 * liq_multiplier
+
+        result[i] = var * (1 + liq_cost)
+
+    return pd.DataFrame({"liquidity_adjusted_var": result}, index=df.index)
+```
+
+#### 修复F：`markov_regime_probability`（概率退化修复）
+
+```python
+@njit
+def _markov_regime_probability_numba(returns, window, transition_prob=0.95):
+    n = len(returns)
+    result = np.full(n, np.nan)
+
+    for i in range(window, n):
+        ret_window = returns[i - window + 1 : i + 1]
+        valid_returns = []
+        for j in range(window):
+            if not np.isnan(ret_window[j]):
+                valid_returns.append(ret_window[j])
+        if len(valid_returns) < window // 2:
+            continue
+
+        vol_window = 20
+        volatilities = []
+        for j in range(len(valid_returns) - vol_window):
+            vol_returns = valid_returns[j:j + vol_window]
+            vol_mean = 0.0
+            for val in vol_returns:
+                vol_mean += val
+            vol_mean /= vol_window
+            vol_var = 0.0
+            for val in vol_returns:
+                vol_var += (val - vol_mean) ** 2
+            volatilities.append(np.sqrt(vol_var / vol_window))
+
+        if len(volatilities) < 10:
+            continue
+
+        vol_median = np.median(np.array(volatilities))
+        states = np.zeros(len(volatilities))
+        for j in range(len(volatilities)):
+            states[j] = 1.0 if volatilities[j] > vol_median else 0.0
+
+        n00 = n01 = n10 = n11 = 0
+        for j in range(len(states) - 1):
+            if states[j] == 0 and states[j + 1] == 0:
+                n00 += 1
+            elif states[j] == 0 and states[j + 1] == 1:
+                n01 += 1
+            elif states[j] == 1 and states[j + 1] == 0:
+                n10 += 1
+            else:
+                n11 += 1
+
+        p00 = n00 / (n00 + n01 + 1e-12)
+        p11 = n11 / (n11 + n10 + 1e-12)
+        p01 = 1.0 - p00
+        p10 = 1.0 - p11
+
+        # 修复点：使用一步马尔可夫更新，而非退化到常数
+        current_state = 1.0 if volatilities[-1] > vol_median else 0.0
+        prev_prob_high = 1.0 if current_state == 1.0 else 0.0
+        prob_high = prev_prob_high * p11 + (1.0 - prev_prob_high) * p01
+        result[i] = prob_high
+
+    return result
 ```
 
 ---
