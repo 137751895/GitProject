@@ -4,7 +4,7 @@
 **文档版本**：v6.1-clean  
 **适用范围**：单品种商品期货（1m/5m/15m），输入为 `OHLCV + open_interest（持仓量）`
 
----
+------
 
 ## 一、整理说明（本次合并结果）
 
@@ -15,64 +15,64 @@
 3. 保留可选扩展特征 2 个，不计入 20 个正式名额。
 4. 统一特征命名、编号、优先级和依赖字段表述。
 
----
+------
 
 ## 二、最终20特征（唯一口径）
 
 > 说明：以下 20 个为第六辑正式特征，编号固定；同名函数建议一处定义、唯一输出。
 
-| 序号 | 特征名 | 类别 | 优先级 | 依赖列 |
-| --- | --- | --- | --- | --- |
-| 1 | `open_interest_velocity` | 持仓量深度 | P0 | `open_interest` |
-| 2 | `open_interest_acceleration` | 持仓量深度 | P0 | `open_interest` |
-| 3 | `long_short_imbalance` | 多空博弈 | P0 | `close, open_interest, volume` |
-| 4 | `new_position_ratio` | 开平仓压力 | P1 | `open_interest, volume` |
-| 5 | `liquidation_pressure` | 开平仓压力 | P1 | `close, open_interest` |
-| 6 | `hedging_ratio_proxy` | 套保比率 | P1 | `open_interest, volume` |
-| 7 | `speculation_index` | 投机度 | P1 | `volume, open_interest` |
-| 8 | `volume_oi_correlation` | 持仓量深度 | P1 | `volume, open_interest` |
-| 9 | `oi_seasonal_pattern` | 持仓量结构 | P2 | `open_interest` |
-| 10 | `rollover_activity` | 展期行为 | P1 | `volume, open_interest` |
-| 11 | `contract_rolling_pressure` | 主力合约切换 | P1 | `close, volume, open_interest` |
-| 12 | `oi_price_regime` | 持仓量结构 | P1 | `close, open_interest` |
-| 13 | `volume_oi_ratio_zscore` | 成交量深度 | P1 | `volume, open_interest` |
-| 14 | `oi_price_divergence_strength` | 持仓量结构 | P1 | `close, open_interest` |
-| 15 | `oi_extreme_ratio` | 持仓量结构 | P2 | `open_interest` |
-| 16 | `volume_breakout` | 成交量深度 | P1 | `volume` |
-| 17 | `volume_stability` | 成交量深度 | P2 | `volume` |
-| 18 | `price_conviction` | 价格形态 | P1 | `high, low, close` |
-| 19 | `oi_momentum_ratio` | 持仓量结构 | P1 | `open_interest` |
-| 20 | `volume_price_efficiency` | 量价关系 | P1 | `close, volume` |
+| 序号 | 特征名                         | 类别         | 优先级 | 依赖列                         |
+| ---- | ------------------------------ | ------------ | ------ | ------------------------------ |
+| 1    | `open_interest_velocity`       | 持仓量深度   | P0     | `open_interest`                |
+| 2    | `open_interest_acceleration`   | 持仓量深度   | P0     | `open_interest`                |
+| 3    | `long_short_imbalance`         | 多空博弈     | P0     | `close, open_interest, volume` |
+| 4    | `new_position_ratio`           | 开平仓压力   | P1     | `open_interest, volume`        |
+| 5    | `liquidation_pressure`         | 开平仓压力   | P1     | `close, open_interest`         |
+| 6    | `hedging_ratio_proxy`          | 套保比率     | P1     | `open_interest, volume`        |
+| 7    | `speculation_index`            | 投机度       | P1     | `volume, open_interest`        |
+| 8    | `volume_oi_correlation`        | 持仓量深度   | P1     | `volume, open_interest`        |
+| 9    | `oi_seasonal_pattern`          | 持仓量结构   | P2     | `open_interest`                |
+| 10   | `rollover_activity`            | 展期行为     | P1     | `volume, open_interest`        |
+| 11   | `contract_rolling_pressure`    | 主力合约切换 | P1     | `close, volume, open_interest` |
+| 12   | `oi_price_regime`              | 持仓量结构   | P1     | `close, open_interest`         |
+| 13   | `volume_oi_ratio_zscore`       | 成交量深度   | P1     | `volume, open_interest`        |
+| 14   | `oi_price_divergence_strength` | 持仓量结构   | P1     | `close, open_interest`         |
+| 15   | `oi_extreme_ratio`             | 持仓量结构   | P2     | `open_interest`                |
+| 16   | `volume_breakout`              | 成交量深度   | P1     | `volume`                       |
+| 17   | `volume_stability`             | 成交量深度   | P2     | `volume`                       |
+| 18   | `price_conviction`             | 价格形态     | P1     | `high, low, close`             |
+| 19   | `oi_momentum_ratio`            | 持仓量结构   | P1     | `open_interest`                |
+| 20   | `volume_price_efficiency`      | 量价关系     | P1     | `close, volume`                |
 
----
+------
 
 ## 二点一、代码一一对应（已验证）
 
 > 对应来源：`见【九、特征因子代码】`。  
 > 验证口径：仅使用当前与历史数据（无 `shift(-k)`、无未来窗口、无 `center=True`）。
 
-| 序号 | 文档特征名 | 代码函数名 | 默认参数 | 核心实现（代码口径） | 未来函数检查 |
-| --- | --- | --- | --- | --- | --- |
-| 1 | `open_interest_velocity` | `compute_open_interest_velocity` | `window=5` | `(oi_t - oi_{t-window}) / window` | 通过 |
-| 2 | `open_interest_acceleration` | `compute_open_interest_acceleration` | `window=5` | `velocity_t - velocity_{t-window}` 再除 `window` | 通过 |
-| 3 | `long_short_imbalance` | `compute_long_short_imbalance` | `window=10` | `sign(close.diff) * (oi.diff/oi_roll_mean) * (vol/vol_roll_mean)` | 通过 |
-| 4 | `new_position_ratio` | `compute_new_position_ratio` | `window=5` | `abs(oi.diff)/(volume+eps)` 后滚动均值 | 通过 |
-| 5 | `liquidation_pressure` | `compute_liquidation_pressure` | `window=10` | 仅在 `price_change*oi_change<0` 时取 `|pct_close|*|pct_oi|` 并平滑 | 通过 |
-| 6 | `hedging_ratio_proxy` | `compute_hedging_ratio_proxy` | `window=20` | `oi/(volume+eps)` 后滚动均值 | 通过 |
-| 7 | `speculation_index` | `compute_speculation_index` | `window=20` | `volume/(oi+eps)` 后滚动均值 | 通过 |
-| 8 | `volume_oi_correlation` | `compute_volume_oi_correlation` | `window=20` | `rolling_corr(volume, oi)` | 通过 |
-| 9 | `oi_seasonal_pattern` | `compute_oi_seasonal_pattern` | `window=20`（`lookback_window=4*window`） | 滚动窗口内“当前值历史分位” | 通过 |
-| 10 | `rollover_activity` | `compute_rollover_activity` | `window=20` | `(volume/volume_roll_mean) * clip((oi_{t-window}-oi_t)/oi_{t-window},0,∞)` | 通过 |
-| 11 | `contract_rolling_pressure` | `compute_contract_rolling_pressure` | `window=10` | `sign(close_t-close_{t-window}) * oi_decline * vol_surge`，并加阈值掩码 | 通过 |
-| 12 | `oi_price_regime` | `compute_oi_price_regime` | `window=5` | 按 `price_trend` 与 `oi_trend` 四象限编码 `1~4`（其余 `0`） | 通过 |
-| 13 | `volume_oi_ratio_zscore` | `compute_volume_oi_ratio_zscore` | `window=20` | `zscore(volume/oi)`（滚动均值与滚动标准差） | 通过 |
-| 14 | `oi_price_divergence_strength` | `compute_oi_price_divergence_strength` | `window=5` | 若价格与持仓方向相反，取 `|price_ret|*|oi_ret|` | 通过 |
-| 15 | `oi_extreme_ratio` | `compute_oi_extreme_ratio` | `window=100` | `(oi-rolling_min)/(rolling_max-rolling_min+eps)` | 通过 |
-| 16 | `volume_breakout` | `compute_volume_breakout` | `window=20` | `volume/volume_roll_mean - 1` | 通过 |
-| 17 | `volume_stability` | `compute_volume_stability` | `window=20` | `rolling_mean(volume)/(rolling_std(volume)+eps)` | 通过 |
-| 18 | `price_conviction` | `compute_price_conviction` | 无 | `abs(2*((close-low)/(high-low))-1)`；`high==low` 置 NaN | 通过 |
-| 19 | `oi_momentum_ratio` | `compute_oi_momentum_ratio` | `fast=5, slow=20` | `MA_fast(oi)/MA_slow(oi)`（`fast>slow` 自动互换） | 通过 |
-| 20 | `volume_price_efficiency` | `compute_volume_price_efficiency` | `window=20, scale_factor=10000` | `abs(close_t-close_{t-window}) / rolling_sum(volume) * scale_factor` | 通过 |
+| 序号 | 文档特征名                     | 代码函数名                             | 默认参数                                  | 核心实现（代码口径）                                         | 未来函数检查 |
+| ---- | ------------------------------ | -------------------------------------- | ----------------------------------------- | ------------------------------------------------------------ | ------------ |
+| 1    | `open_interest_velocity`       | `compute_open_interest_velocity`       | `window=5`                                | `(oi_t - oi_{t-window}) / window`                            | 通过         |
+| 2    | `open_interest_acceleration`   | `compute_open_interest_acceleration`   | `window=5`                                | `velocity_t - velocity_{t-window}` 再除 `window`             | 通过         |
+| 3    | `long_short_imbalance`         | `compute_long_short_imbalance`         | `window=10`                               | `sign(close.diff) * (oi.diff/oi_roll_mean) * (vol/vol_roll_mean)` | 通过         |
+| 4    | `new_position_ratio`           | `compute_new_position_ratio`           | `window=5`                                | `abs(oi.diff)/(volume+eps)` 后滚动均值                       | 通过         |
+| 5    | `liquidation_pressure`         | `compute_liquidation_pressure`         | `window=10`                               | 仅在 `price_change*oi_change<0` 时取 `|pct_close|*|pct_oi|` 并平滑 | 通过         |
+| 6    | `hedging_ratio_proxy`          | `compute_hedging_ratio_proxy`          | `window=20`                               | `oi/(volume+eps)` 后滚动均值                                 | 通过         |
+| 7    | `speculation_index`            | `compute_speculation_index`            | `window=20`                               | `volume/(oi+eps)` 后滚动均值                                 | 通过         |
+| 8    | `volume_oi_correlation`        | `compute_volume_oi_correlation`        | `window=20`                               | `rolling_corr(volume, oi)`                                   | 通过         |
+| 9    | `oi_seasonal_pattern`          | `compute_oi_seasonal_pattern`          | `window=20`（`lookback_window=4*window`） | 滚动窗口内“当前值历史分位”                                   | 通过         |
+| 10   | `rollover_activity`            | `compute_rollover_activity`            | `window=20`                               | `(volume/volume_roll_mean) * clip((oi_{t-window}-oi_t)/oi_{t-window},0,∞)` | 通过         |
+| 11   | `contract_rolling_pressure`    | `compute_contract_rolling_pressure`    | `window=10`                               | `sign(close_t-close_{t-window}) * oi_decline * vol_surge`，并加阈值掩码 | 通过         |
+| 12   | `oi_price_regime`              | `compute_oi_price_regime`              | `window=5`                                | 按 `price_trend` 与 `oi_trend` 四象限编码 `1~4`（其余 `0`）  | 通过         |
+| 13   | `volume_oi_ratio_zscore`       | `compute_volume_oi_ratio_zscore`       | `window=20`                               | `zscore(volume/oi)`（滚动均值与滚动标准差）                  | 通过         |
+| 14   | `oi_price_divergence_strength` | `compute_oi_price_divergence_strength` | `window=5`                                | 若价格与持仓方向相反，取 `|price_ret|*|oi_ret|`              | 通过         |
+| 15   | `oi_extreme_ratio`             | `compute_oi_extreme_ratio`             | `window=100`                              | `(oi-rolling_min)/(rolling_max-rolling_min+eps)`             | 通过         |
+| 16   | `volume_breakout`              | `compute_volume_breakout`              | `window=20`                               | `volume/volume_roll_mean - 1`                                | 通过         |
+| 17   | `volume_stability`             | `compute_volume_stability`             | `window=20`                               | `rolling_mean(volume)/(rolling_std(volume)+eps)`             | 通过         |
+| 18   | `price_conviction`             | `compute_price_conviction`             | 无                                        | `abs(2*((close-low)/(high-low))-1)`；`high==low` 置 NaN      | 通过         |
+| 19   | `oi_momentum_ratio`            | `compute_oi_momentum_ratio`            | `fast=5, slow=20`                         | `MA_fast(oi)/MA_slow(oi)`（`fast>slow` 自动互换）            | 通过         |
+| 20   | `volume_price_efficiency`      | `compute_volume_price_efficiency`      | `window=20, scale_factor=10000`           | `abs(close_t-close_{t-window}) / rolling_sum(volume) * scale_factor` | 通过         |
 
 ## 三、替换关系（已固化）
 
@@ -84,7 +84,7 @@
 
 > 原则：本版仅保留**单品种可直接计算**且不依赖其他合约/外部数据的特征。
 
----
+------
 
 ## 四、实现规范（统一约束）
 
@@ -106,7 +106,7 @@
 - 趋势判定阈值建议 `1e-8`
 - 价格/持仓变化涉及比例时需对分母做有效性检查
 
----
+------
 
 ## 五、Numba辅助函数（建议保留）
 
@@ -120,23 +120,23 @@
 用途分别对应：速度、加速度、滚动相关、滚动标准化。  
 这些函数已在历史稿中多次复用，保留一份即可。
 
----
+------
 
 ## 六、特征分组与默认参数
 
-| 分组 | 特征 | 默认参数 |
-| --- | --- | --- |
-| 持仓量深度 | 1,2,8 | `window=5/5/20` |
-| 多空博弈 | 3 | `window=10` |
-| 开平仓压力 | 4,5 | `window=5/10` |
-| 套保/投机 | 6,7 | `window=20/20` |
+| 分组       | 特征          | 默认参数                             |
+| ---------- | ------------- | ------------------------------------ |
+| 持仓量深度 | 1,2,8         | `window=5/5/20`                      |
+| 多空博弈   | 3             | `window=10`                          |
+| 开平仓压力 | 4,5           | `window=5/10`                        |
+| 套保/投机  | 6,7           | `window=20/20`                       |
 | 持仓量结构 | 9,12,14,15,19 | `window=20/5/5/100; fast=5, slow=20` |
-| 展期/换月 | 10,11 | `window=20/10` |
-| 成交量深度 | 13,16,17 | `window=20` |
-| 价格形态 | 18 | 无窗口 |
-| 量价关系 | 20 | `window=20, scale_factor=10000` |
+| 展期/换月  | 10,11         | `window=20/10`                       |
+| 成交量深度 | 13,16,17      | `window=20`                          |
+| 价格形态   | 18            | 无窗口                               |
+| 量价关系   | 20            | `window=20, scale_factor=10000`      |
 
----
+------
 
 ## 七、可选扩展特征（不占20名额）
 
@@ -147,7 +147,7 @@
 
 建议在实验阶段单独开关，不默认进入生产训练集。
 
----
+------
 
 ## 八、落地集成步骤（建议）
 
