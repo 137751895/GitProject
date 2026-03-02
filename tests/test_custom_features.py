@@ -1987,3 +1987,316 @@ class TestBatch4Integration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ---------------------------------------------------------------------------  # [新增]
+# 第五辑：20个特征因子测试                                                    # [新增]
+# ---------------------------------------------------------------------------  # [新增]
+
+def _make_batch5_df(n=300):                                                    # [新增]
+    """Create test data for batch-5 features (needs longer series)."""         # [新增]
+    rng = np.random.RandomState(55)                                            # [新增]
+    close = 100.0 + np.cumsum(rng.randn(n) * 0.5)                             # [新增]
+    high = close + rng.uniform(0.3, 1.5, n)                                    # [新增]
+    low = close - rng.uniform(0.3, 1.5, n)                                     # [新增]
+    open_ = close + rng.randn(n) * 0.2                                         # [新增]
+    volume = rng.randint(100, 2000, n).astype(float)                           # [新增]
+    oi = 5000.0 + np.cumsum(rng.randn(n) * 10)                                # [新增]
+    idx = pd.date_range("2026-01-01 09:00", periods=n, freq="5min")            # [新增]
+    return pd.DataFrame({                                                      # [新增]
+        "open": open_, "high": high, "low": low,                               # [新增]
+        "close": close, "volume": volume, "open_interest": oi,                 # [新增]
+    }, index=idx)                                                              # [新增]
+
+
+class TestLyapunovExponentRefined:                                             # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_lyapunov_exponent_refined  # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_lyapunov_exponent_refined(df)                         # [新增]
+        assert "lyapunov_exponent_refined" in result.columns                   # [新增]
+        assert len(result) == len(df)                                          # [新增]
+
+    def test_no_future_data(self):                                             # [新增]
+        from features.custom_features import compute_lyapunov_exponent_refined  # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        full = compute_lyapunov_exponent_refined(df)["lyapunov_exponent_refined"]  # [新增]
+        trunc = compute_lyapunov_exponent_refined(df.iloc[:150])["lyapunov_exponent_refined"]  # [新增]
+        valid = trunc.dropna()                                                 # [新增]
+        if len(valid) > 0:                                                     # [新增]
+            last = valid.index[-1]                                             # [新增]
+            assert np.isclose(full.loc[last], trunc.loc[last], equal_nan=True)  # [新增]
+
+
+class TestCorrelationDimension:                                                # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_correlation_dimension     # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_correlation_dimension(df)                             # [新增]
+        assert "correlation_dimension" in result.columns                       # [新增]
+        assert len(result) == len(df)                                          # [新增]
+
+
+class TestMartingaleDifference:                                                # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_martingale_difference     # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_martingale_difference(df)                             # [新增]
+        assert "martingale_difference" in result.columns                       # [新增]
+        assert result["martingale_difference"].dropna().shape[0] > 0           # [新增]
+
+    def test_nonnegative(self):                                                # [新增]
+        from features.custom_features import compute_martingale_difference     # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        vals = compute_martingale_difference(df)["martingale_difference"].dropna()  # [新增]
+        assert (vals >= 0).all()                                               # [新增]
+
+
+class TestVarianceRatioTest:                                                   # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_variance_ratio_test       # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_variance_ratio_test(df)                               # [新增]
+        assert "variance_ratio_test" in result.columns                         # [新增]
+
+    def test_nonnegative(self):                                                # [新增]
+        from features.custom_features import compute_variance_ratio_test       # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        vals = compute_variance_ratio_test(df)["variance_ratio_test"].dropna()  # [新增]
+        assert (vals >= 0).all()                                               # [新增]
+
+
+class TestMutualInformation:                                                   # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_mutual_information        # [新增]
+        df = _make_batch5_df(250)                                              # [新增]
+        result = compute_mutual_information(df, window=50, lag=3)              # [新增]
+        assert "mutual_information" in result.columns                          # [新增]
+
+    def test_nonnegative(self):                                                # [新增]
+        from features.custom_features import compute_mutual_information        # [新增]
+        df = _make_batch5_df(250)                                              # [新增]
+        vals = compute_mutual_information(df, window=50, lag=3)["mutual_information"].dropna()  # [新增]
+        assert (vals >= -0.01).all()  # MI should be >= 0 (small rounding ok)  # [新增]
+
+
+class TestTransferEntropy:                                                     # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_transfer_entropy          # [新增]
+        df = _make_batch5_df(250)                                              # [新增]
+        result = compute_transfer_entropy(df, window=50)                       # [新增]
+        assert "transfer_entropy" in result.columns                            # [新增]
+
+
+class TestConditionalVaR:                                                      # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_conditional_value_at_risk  # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_conditional_value_at_risk(df, window=30)              # [新增]
+        assert "conditional_value_at_risk" in result.columns                   # [新增]
+
+    def test_cvar_negative(self):                                              # [新增]
+        """CVaR at 95% should capture left tail (negative values)."""          # [新增]
+        from features.custom_features import compute_conditional_value_at_risk  # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        vals = compute_conditional_value_at_risk(df, window=30)["conditional_value_at_risk"].dropna()  # [新增]
+        assert (vals < 0).any()  # Should capture left-tail losses             # [新增]
+
+
+class TestExpectedShortfall:                                                   # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_expected_shortfall        # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_expected_shortfall(df, window=30)                     # [新增]
+        assert "expected_shortfall" in result.columns                          # [新增]
+
+
+class TestMarketMicrostructureEfficiency:                                      # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_market_microstructure_efficiency  # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_market_microstructure_efficiency(df, window=30)        # [新增]
+        assert "market_microstructure_efficiency" in result.columns             # [新增]
+
+    def test_bounded(self):                                                    # [新增]
+        from features.custom_features import compute_market_microstructure_efficiency  # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        vals = compute_market_microstructure_efficiency(df, window=30)["market_microstructure_efficiency"].dropna()  # [新增]
+        assert (vals <= 10.0).all()  # Capped at 10                            # [新增]
+
+
+class TestPriceDiscoveryRatio:                                                 # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_price_discovery_ratio     # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_price_discovery_ratio(df, window=10)                  # [新增]
+        assert "price_discovery_ratio" in result.columns                       # [新增]
+
+
+class TestCointegrationResidual:                                               # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_cointegration_residual    # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_cointegration_residual(df, window=40)                 # [新增]
+        assert "cointegration_residual" in result.columns                      # [新增]
+        assert result["cointegration_residual"].dropna().shape[0] > 0          # [新增]
+
+
+class TestPairsTradingSignal:                                                  # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_pairs_trading_signal      # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        from features.custom_features import compute_cointegration_residual    # [新增]
+        coint = compute_cointegration_residual(df, window=40)                  # [新增]
+        result = compute_pairs_trading_signal(df, features_df=coint, window=40)  # [新增]
+        assert "pairs_trading_signal" in result.columns                        # [新增]
+
+    def test_signal_values(self):                                              # [新增]
+        """Signal should be in {-1, 0, 1}."""                                  # [新增]
+        from features.custom_features import compute_pairs_trading_signal, compute_cointegration_residual  # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        coint = compute_cointegration_residual(df, window=40)                  # [新增]
+        result = compute_pairs_trading_signal(df, features_df=coint, window=40)  # [新增]
+        vals = result["pairs_trading_signal"].dropna().unique()                # [新增]
+        assert set(vals).issubset({-1.0, 0.0, 1.0})                           # [新增]
+
+
+class TestChartPatternStrength:                                                # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_chart_pattern_strength    # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_chart_pattern_strength(df, window=20)                 # [新增]
+        assert "chart_pattern_strength" in result.columns                      # [新增]
+
+    def test_nonnegative(self):                                                # [新增]
+        from features.custom_features import compute_chart_pattern_strength    # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        vals = compute_chart_pattern_strength(df, window=20)["chart_pattern_strength"].dropna()  # [新增]
+        assert (vals >= 0).all()                                               # [新增]
+
+
+class TestCandlestickPatternScore:                                             # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_candlestick_pattern_score  # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_candlestick_pattern_score(df)                         # [新增]
+        assert "candlestick_pattern_score" in result.columns                   # [新增]
+
+    def test_nonnegative(self):                                                # [新增]
+        from features.custom_features import compute_candlestick_pattern_score  # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        vals = compute_candlestick_pattern_score(df)["candlestick_pattern_score"]  # [新增]
+        assert (vals >= 0).all()                                               # [新增]
+
+
+class TestMultifractalSpectrum:                                                # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_multifractal_spectrum     # [新增]
+        df = _make_batch5_df(250)                                              # [新增]
+        result = compute_multifractal_spectrum(df, window=50)                  # [新增]
+        assert "multifractal_spectrum" in result.columns                       # [新增]
+
+
+class TestLiquidityAdjustedVar:                                                # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_liquidity_adjusted_var    # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_liquidity_adjusted_var(df, window=30)                 # [新增]
+        assert "liquidity_adjusted_var" in result.columns                      # [新增]
+
+
+class TestVolatilitySmileSlope:                                                # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_volatility_smile_slope    # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_volatility_smile_slope(df, window=30)                 # [新增]
+        assert "volatility_smile_slope" in result.columns                      # [新增]
+
+
+class TestTermStructureCurvature:                                              # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_term_structure_curvature  # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        # Need volatility_5, volatility_20, volatility_60 in features_df       # [新增]
+        close = df["close"]                                                    # [新增]
+        rets = close.pct_change()                                              # [新增]
+        feats = pd.DataFrame({                                                 # [新增]
+            "volatility_5": rets.rolling(5).std(),                             # [新增]
+            "volatility_20": rets.rolling(20).std(),                           # [新增]
+            "volatility_60": rets.rolling(60).std(),                           # [新增]
+        }, index=df.index)                                                     # [新增]
+        result = compute_term_structure_curvature(df, features_df=feats)       # [新增]
+        assert "term_structure_curvature" in result.columns                    # [新增]
+
+    def test_missing_deps(self):                                               # [新增]
+        from features.custom_features import compute_term_structure_curvature  # [新增]
+        df = _make_batch5_df(50)                                               # [新增]
+        result = compute_term_structure_curvature(df, features_df=None)        # [新增]
+        assert result["term_structure_curvature"].isna().all()                 # [新增]
+
+
+class TestBayesianVolatility:                                                  # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_bayesian_volatility       # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        result = compute_bayesian_volatility(df, window=30)                    # [新增]
+        assert "bayesian_volatility" in result.columns                         # [新增]
+
+    def test_positive(self):                                                   # [新增]
+        from features.custom_features import compute_bayesian_volatility       # [新增]
+        df = _make_batch5_df(200)                                              # [新增]
+        vals = compute_bayesian_volatility(df, window=30)["bayesian_volatility"].dropna()  # [新增]
+        assert (vals >= 0).all()                                               # [新增]
+
+
+class TestMarkovRegimeProbability:                                             # [新增]
+    def test_output_shape(self):                                               # [新增]
+        from features.custom_features import compute_markov_regime_probability  # [新增]
+        df = _make_batch5_df(250)                                              # [新增]
+        result = compute_markov_regime_probability(df, window=50)              # [新增]
+        assert "markov_regime_probability" in result.columns                   # [新增]
+
+    def test_probability_range(self):                                          # [新增]
+        from features.custom_features import compute_markov_regime_probability  # [新增]
+        df = _make_batch5_df(250)                                              # [新增]
+        vals = compute_markov_regime_probability(df, window=50)["markov_regime_probability"].dropna()  # [新增]
+        assert (vals >= 0).all() and (vals <= 1).all()                         # [新增]
+
+
+class TestBatch5Integration:                                                   # [新增]
+    """Integration tests for all 20 batch-5 features."""                       # [新增]
+
+    BATCH5_FEATURES = [                                                        # [新增]
+        "lyapunov_exponent_refined", "correlation_dimension",                  # [新增]
+        "martingale_difference", "variance_ratio_test",                        # [新增]
+        "mutual_information", "transfer_entropy",                              # [新增]
+        "conditional_value_at_risk", "expected_shortfall",                     # [新增]
+        "market_microstructure_efficiency", "price_discovery_ratio",           # [新增]
+        "cointegration_residual", "pairs_trading_signal",                      # [新增]
+        "chart_pattern_strength", "candlestick_pattern_score",                 # [新增]
+        "multifractal_spectrum", "liquidity_adjusted_var",                     # [新增]
+        "volatility_smile_slope", "term_structure_curvature",                  # [新增]
+        "bayesian_volatility", "markov_regime_probability",                    # [新增]
+    ]                                                                          # [新增]
+
+    def test_all_20_registered(self):                                          # [新增]
+        registry = FeatureRegistry()                                           # [新增]
+        all_outputs = set()                                                    # [新增]
+        for name, entry in registry.get_all_entries().items():                 # [新增]
+            all_outputs.update(entry.output_names)                             # [新增]
+        for feat in self.BATCH5_FEATURES:                                      # [新增]
+            assert feat in all_outputs, f"Missing from registry: {feat}"       # [新增]
+
+    def test_compute_all_features_includes_batch5(self):                       # [新增]
+        from features.feature_engineering import compute_all_features          # [新增]
+        df = _make_batch5_df(300)                                              # [新增]
+        features_df = compute_all_features(df, period="5min")                  # [新增]
+        # term_structure_curvature depends on volatility_60 which only exists   # [新增]
+        # for 1min period, so it may be skipped for 5min                       # [新增]
+        optional = {"term_structure_curvature"}                                # [新增]
+        for feat in self.BATCH5_FEATURES:                                      # [新增]
+            if feat in optional:                                               # [新增]
+                continue                                                       # [新增]
+            assert feat in features_df.columns, f"Missing: {feat}"             # [新增]
+        # No duplicate columns                                                 # [新增]
+        assert len(features_df.columns) == len(set(features_df.columns))       # [新增]
