@@ -2930,7 +2930,7 @@ def compute_pairs_trading_signal(df, features_df=None, window=60, entry_threshol
             elif z < -entry_threshold:                                   # [新增]
                 position = 1                                             # [新增]
         else:                                                            # [新增]
-            if abs(z) <= exit_threshold:  # [BUGFIX]                     # [新增]
+            if abs(z) <= exit_threshold:  # [BUGFIX] was z<=exit, now exits on both sides  # [新增]
                 position = 0                                             # [新增]
         result[i] = position                                             # [新增]
     return pd.DataFrame({"pairs_trading_signal": result}, index=df.index)  # [新增]

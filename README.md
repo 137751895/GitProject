@@ -128,7 +128,7 @@ GitProject/
 | `compute_candle_features()` | K线形态特征 | `body_ratio`, `upper_shadow_ratio`, `lower_shadow_ratio`, `candle_direction`, `amplitude`, `gap`, `gap_ratio` |
 | `compute_volatility_features()` | 波动率特征 | `volatility_*`, `return_ma_*`, `log_return` |
 | `compute_price_position()` | 价格位置特征 | `price_position`, `dist_to_high`, `dist_to_low` |
-| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换 + 注册表自定义特征） | 205+个特征（随自定义特征增加） |
+| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换 + 注册表自定义特征） | 224+个特征（随自定义特征增加） |
 | `get_feature_hierarchy()` | **获取分层特征结构**，按6层层级组织全部特征（自动合并注册表特征） | 层级字典 |
 | `compute_prediction_targets()` | 预测目标 | `future_return`, `future_direction`, `future_volatility`, `future_regime` |
 
@@ -758,6 +758,31 @@ Optuna和贝叶斯优化超参搜索（改进点 3.1/3.3），含L2归一化Pipe
 | `z_score_of_z_scores` | 高阶统计 | level6_transforms | P1 | 极端异常值检测 | — |
 | `network_centrality` | 复杂网络 | level6_transforms | P3 | 特征向量中心度（需多品种） | — |
 | `community_strength` | 复杂网络 | level6_transforms | P3 | 板块群落强度（需多品种） | — |
+
+**依据《hfml特征工程增强报告-精选20特征-第五辑》集成的20个因子**（含公式验证与Bug修复）：
+
+| 特征名 | 类别 | 层级 | 优先级 | 说明 | Bug修复 |
+|--------|------|------|--------|------|---------|
+| `lyapunov_exponent_refined` | 混沌理论 | level6_transforms | P2 | 改进李雅普诺夫指数（相空间重构） | — |
+| `correlation_dimension` | 混沌理论 | level6_transforms | P2 | Grassberger-Procaccia关联维数 | — |
+| `martingale_difference` | 鞅测度 | level6_transforms | P1 | 非参数条件期望鞅差检验 | — |
+| `variance_ratio_test` | 鞅测度 | level6_transforms | P1 | Lo-MacKinlay方差比检验统计量 | — |
+| `mutual_information` | 信息论 | level6_transforms | P1 | 直方图法互信息 | **窗口切片对齐修复** |
+| `transfer_entropy` | 信息论 | level6_transforms | P2 | Schreiber传递熵 | **实现补齐（纯NumPy）** |
+| `conditional_value_at_risk` | 风险测度 | level5_cross | P1 | CVaR尾部损失均值 | — |
+| `expected_shortfall` | 风险测度 | level5_cross | P1 | 预期亏损（负收益CVaR） | — |
+| `market_microstructure_efficiency` | 市场微观结构 | level4_micro | P2 | 市场效率系数 | **方差去均值修复** |
+| `price_discovery_ratio` | 市场微观结构 | level4_micro | P2 | 开盘缺口/日内波幅比 | — |
+| `cointegration_residual` | 统计套利 | level6_transforms | P1 | 简化ADF t统计量（close vs EMA） | **实现补齐** |
+| `pairs_trading_signal` | 统计套利 | level6_transforms | P1 | Z-score配对交易信号 | **平仓条件修复** |
+| `chart_pattern_strength` | 模式识别 | level6_transforms | P2 | 头肩/双顶底/三角形识别 | **起始索引修复** |
+| `candlestick_pattern_score` | 模式识别 | level1_price | P2 | K线形态（十字星、吞没、早晚之星） | — |
+| `multifractal_spectrum` | 分形市场 | level6_transforms | P2 | 配分函数多重分形谱宽度 | **起始索引修复** |
+| `liquidity_adjusted_var` | 风险测度 | level5_cross | P1 | 流动性调整VaR | **流动性冲击退化修复** |
+| `volatility_smile_slope` | 波动率微笑 | level5_cross | P2 | 分位数法波动率偏斜 | — |
+| `term_structure_curvature` | 期限结构 | level5_cross | P2 | 波动率蝶式价差曲率 | — |
+| `bayesian_volatility` | 贝叶斯推断 | level5_cross | P2 | 共轭先验波动率估计 | — |
+| `markov_regime_probability` | 马尔可夫场 | level5_cross | P2 | 高波动状态概率 | **概率退化修复** |
 
 ---
 
