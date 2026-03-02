@@ -128,7 +128,7 @@ GitProject/
 | `compute_candle_features()` | K线形态特征 | `body_ratio`, `upper_shadow_ratio`, `lower_shadow_ratio`, `candle_direction`, `amplitude`, `gap`, `gap_ratio` |
 | `compute_volatility_features()` | 波动率特征 | `volatility_*`, `return_ma_*`, `log_return` |
 | `compute_price_position()` | 价格位置特征 | `price_position`, `dist_to_high`, `dist_to_low` |
-| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换 + 注册表自定义特征） | 224+个特征（随自定义特征增加） |
+| `compute_all_features()` | **一键计算所有特征**（含市场状态 + 微观结构 + 高级波动率 + 缺口衰减 + 深度变换 + 注册表自定义特征） | 246+个特征（随自定义特征增加） |
 | `get_feature_hierarchy()` | **获取分层特征结构**，按6层层级组织全部特征（自动合并注册表特征） | 层级字典 |
 | `compute_prediction_targets()` | 预测目标 | `future_return`, `future_direction`, `future_volatility`, `future_regime` |
 
@@ -783,6 +783,33 @@ Optuna和贝叶斯优化超参搜索（改进点 3.1/3.3），含L2归一化Pipe
 | `term_structure_curvature` | 期限结构 | level5_cross | P2 | 波动率蝶式价差曲率 | — |
 | `bayesian_volatility` | 贝叶斯推断 | level5_cross | P2 | 共轭先验波动率估计 | — |
 | `markov_regime_probability` | 马尔可夫场 | level5_cross | P2 | 高波动状态概率 | **概率退化修复** |
+
+**依据《hfml特征工程增强报告-精选20特征-第六辑》集成的22个因子**（20正式 + 2可选扩展，公式验证无Bug）：
+
+| 特征名 | 类别 | 层级 | 优先级 | 说明 |
+|--------|------|------|--------|------|
+| `open_interest_velocity` | 持仓量深度 | level4_micro | P0 | 持仓量变化速度 (oi[t]-oi[t-w])/w |
+| `open_interest_acceleration` | 持仓量深度 | level4_micro | P0 | 持仓量加速度（二阶差分） |
+| `long_short_imbalance` | 多空博弈 | level4_micro | P0 | 多空不平衡度：sign(price)×OI比×量比 |
+| `new_position_ratio` | 开平仓压力 | level4_micro | P1 | 新增仓位占比 |abs(OI.diff)|/vol |
+| `liquidation_pressure` | 开平仓压力 | level4_micro | P1 | 平仓压力（价格OI反向时触发） |
+| `hedging_ratio_proxy` | 套保比率 | level4_micro | P1 | 套保需求代理 OI/(vol+ε) |
+| `speculation_index` | 投机度 | level4_micro | P1 | 投机活跃度 vol/(OI+ε) |
+| `volume_oi_correlation` | 持仓量深度 | level4_micro | P1 | 成交量与OI滚动相关性 |
+| `oi_seasonal_pattern` | 持仓量结构 | level4_micro | P2 | OI滚动历史分位 |
+| `rollover_activity` | 展期行为 | level5_cross | P1 | 移仓换月活动强度 |
+| `contract_rolling_pressure` | 主力合约切换 | level5_cross | P1 | 换月压力（OI下降+放量+方向） |
+| `oi_price_regime` | 持仓量结构 | level4_micro | P1 | 价格-OI四象限状态编码(0-4) |
+| `volume_oi_ratio_zscore` | 成交量深度 | level4_micro | P1 | 量仓比Z-Score |
+| `oi_price_divergence_strength` | 持仓量结构 | level4_micro | P1 | 价量背离强度 |
+| `oi_extreme_ratio` | 持仓量结构 | level4_micro | P2 | OI历史区间位置(0-1) |
+| `volume_breakout` | 成交量深度 | level4_micro | P1 | 成交量突破强度 vol/MA-1 |
+| `volume_stability` | 成交量深度 | level4_micro | P2 | 成交量稳定性 MA/STD |
+| `price_conviction` | 价格形态 | level1_price | P1 | K线信念度 |2*(close-low)/(high-low)-1| |
+| `oi_momentum_ratio` | 持仓量结构 | level4_micro | P1 | OI快慢均线比率 |
+| `volume_price_efficiency` | 量价关系 | level4_micro | P1 | 单位成交量价格推动效率 |
+| `oi_mean_reversion` | 持仓量结构 | level4_micro | 扩展 | OI均值回归信号（可选） |
+| `volume_price_divergence` | 量价关系 | level4_micro | 扩展 | 量价背离信号（可选） |
 
 ---
 
