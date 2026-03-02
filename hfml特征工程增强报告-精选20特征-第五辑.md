@@ -6,7 +6,7 @@
 **适用周期**：1分钟/5分钟/15分钟 K线数据（OHLCV + 持仓量/仓差）
 **说明**：本辑20个特征与前四辑完全不重复，覆盖新的维度：混沌理论、鞅测度、信息论、风险测度、市场微观结构高阶、统计套利、模式识别、分形市场、情绪代理、资金流、市场质量、波动率微笑、期限结构高阶、贝叶斯推断、随机过程、马尔可夫场、图神经网络代理、强化学习代理、元学习特征、集成特征等。
 
----
+------
 
 ## 一、推荐特征总览表
 
@@ -33,7 +33,7 @@
 | 19   | `bayesian_volatility`              | 贝叶斯推断   | 贝叶斯波动率     | P2     |
 | 20   | `markov_regime_probability`        | 马尔可夫场   | 马尔可夫状态概率 | P2     |
 
----
+------
 
 ## 二、Numba加速辅助函数
 
@@ -406,7 +406,7 @@ def _candlestick_pattern_numba(open_, high, low, close):
     return result
 ```
 
----
+------
 
 ## 三、特征集成详细说明
 
@@ -415,24 +415,29 @@ def _candlestick_pattern_numba(open_, high, low, close):
 #### 特征 1：`lyapunov_exponent_refined`（改进李雅普诺夫指数）
 
 ##### 1. 元数据
+
 - **特征类别**：混沌理论
 - **优先级**：P2
 - **理论依据**：李雅普诺夫指数衡量系统对初始条件的敏感度，正值表示混沌，负值表示稳定。改进版用更稳健的算法。
 
 ##### 2. 计算公式
+
 ```
 λ = lim(t→∞) (1/t) ln|δx(t)/δx(0)|
 ```
 
 ##### 3. 依赖列
+
 - `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 100（建议范围 50~200）
 - `embed_dim`：默认 3（嵌入维数）
 - `delay`：默认 5（延迟时间）
 
 ##### 5. 集成代码
+
 ```python
 import numpy as np
 import pandas as pd
@@ -530,29 +535,34 @@ def compute_lyapunov_exponent_refined(df, features_df=None, window=100, embed_di
     return pd.DataFrame({"lyapunov_exponent_refined": result}, index=df.index)
 ```
 
----
+------
 
 #### 特征 2：`correlation_dimension`（关联维数）
 
 ##### 1. 元数据
+
 - **特征类别**：混沌理论
 - **优先级**：P2
 - **理论依据**：关联维数衡量系统的复杂度，分数维表示混沌系统。
 
 ##### 2. 计算公式
+
 ```
 D2 = lim(r→0) log(C(r)) / log(r)
 ```
 
 ##### 3. 依赖列
+
 - `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 100（建议范围 50~200）
 - `embed_dim`：默认 5（嵌入维数）
 - `r_ratio`：默认 0.1（距离阈值比例）
 
 ##### 5. 集成代码
+
 ```python
 @njit
 def _correlation_dimension_numba(arr, window, embed_dim=5, r_ratio=0.1):
@@ -651,29 +661,34 @@ def compute_correlation_dimension(df, features_df=None, window=100, embed_dim=5,
     return pd.DataFrame({"correlation_dimension": result}, index=df.index)
 ```
 
----
+------
 
 ### 3.2 鞅测度类（Martingale Measures）
 
 #### 特征 3：`martingale_difference`（鞅差检验）
 
 ##### 1. 元数据
+
 - **特征类别**：鞅测度
 - **优先级**：P1
 - **理论依据**：鞅差序列的期望为零，偏离鞅性质表示存在可预测性。
 
 ##### 2. 计算公式
+
 ```
 MD = |E[return_t | F_{t-1}]|
 ```
 
 ##### 3. 依赖列
+
 - `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 50（建议范围 30~100）
 
 ##### 5. 集成代码
+
 ```python
 @njit
 def _martingale_difference_numba(returns, window):
@@ -746,28 +761,33 @@ def compute_martingale_difference(df, features_df=None, window=50, **kwargs):
     return pd.DataFrame({"martingale_difference": result}, index=df.index)
 ```
 
----
+------
 
 #### 特征 4：`variance_ratio_test`（方差比检验统计量）
 
 ##### 1. 元数据
+
 - **特征类别**：鞅测度
 - **优先级**：P1
 - **理论依据**：方差比检验随机游走假设，统计量偏离1表示可预测性。
 
 ##### 2. 计算公式
+
 ```
 VR(q) = Var(r_t(q)) / (q * Var(r_t))
 ```
 
 ##### 3. 依赖列
+
 - `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 50（建议范围 30~100）
 - `q`：默认 5（聚合期数）
 
 ##### 5. 集成代码
+
 ```python
 @njit
 def _variance_ratio_test_numba(returns, window, q=5):
@@ -845,31 +865,36 @@ def compute_variance_ratio_test(df, features_df=None, window=50, q=5, **kwargs):
     return pd.DataFrame({"variance_ratio_test": result}, index=df.index)
 ```
 
----
+------
 
 ### 3.3 信息论类（Information Theory）
 
 #### 特征 5：`mutual_information`（互信息）
 
 ##### 1. 元数据
+
 - **特征类别**：信息论
 - **优先级**：P1
 - **理论依据**：互信息衡量两个序列的共享信息量，能捕捉非线性依赖。
 
 ##### 2. 计算公式
+
 ```
 I(X;Y) = H(X) + H(Y) - H(X,Y)
 ```
 
 ##### 3. 依赖列
+
 - `close`（与自身延迟或与其他特征）
 
 ##### 4. 参数建议
+
 - `window`：默认 100（建议范围 50~200）
 - `lag`：默认 5（延迟期数）
 - `bins`：默认 20（直方图分箱数）
 
 ##### 5. 集成代码
+
 ```python
 import numpy as np
 import pandas as pd
@@ -987,92 +1012,99 @@ def compute_mutual_information(df, features_df=None, window=100, lag=5, bins=20,
     return pd.DataFrame({"mutual_information": result}, index=df.index)
 ```
 
+------
+
+```
+#### 特征 6：`transfer_entropy`（传递熵）
+
+##### 1. 元数据
+- **特征类别**：信息论
+- **优先级**：P2
+- **理论依据**：传递熵衡量历史状态对当前收益的信息增益，能刻画方向性依赖。
+
+##### 2. 计算公式
+​```
+TE(Y→X) = Σ p(x_t, x_{t-1}, y_{t-1}) log [ p(x_t|x_{t-1},y_{t-1}) / p(x_t|x_{t-1}) ]
+​```
+
+##### 3. 依赖列
+- `close`
+
+##### 4. 参数建议
+- `window`：默认 100（建议范围 50~200）
+- `lag`：默认 1
+- `bins`：默认 10
+
+##### 5. 集成代码
+​```python
+@register_feature(
+    group="信息论",
+    level="level6_transforms",
+    description="传递熵，衡量滞后状态对当前收益的信息增益",
+    depends_on=[],
+    output_names=["transfer_entropy"]
+)
+def compute_transfer_entropy(df, features_df=None, window=100, lag=1, bins=10, **kwargs):
+    close = df["close"].values.astype(np.float64)
+
+    returns = np.full(len(close), np.nan)
+    for i in range(1, len(close)):
+        if close[i - 1] > 0:
+            returns[i] = (close[i] - close[i - 1]) / close[i - 1]
+
+    n = len(returns)
+    result = np.full(n, np.nan)
+
+    for i in range(window + lag, n):
+        # 单品种场景下使用收益率自传递熵代理
+        x = returns[i - window + 1 : i + 1]
+        y = returns[i - window + 1 : i + 1]
+
+        valid_x = []
+        valid_y = []
+        for j in range(window):
+            if not np.isnan(x[j]) and not np.isnan(y[j]):
+                valid_x.append(x[j])
+                valid_y.append(y[j])
+
+        if len(valid_x) > 30:
+            result[i] = _transfer_entropy_numba(
+                np.array(valid_x), np.array(valid_y), lag=lag, bins=bins
+            )
+
+    return pd.DataFrame({"transfer_entropy": result}, index=df.index)
+​```
+
 ---
-
-    #### 特征 6：`transfer_entropy`（传递熵）
-
-    ##### 1. 元数据
-    - **特征类别**：信息论
-    - **优先级**：P2
-    - **理论依据**：传递熵衡量历史状态对当前收益的信息增益，能刻画方向性依赖。
-
-    ##### 2. 计算公式
-    ```
-    TE(Y→X) = Σ p(x_t, x_{t-1}, y_{t-1}) log [ p(x_t|x_{t-1},y_{t-1}) / p(x_t|x_{t-1}) ]
-    ```
-
-    ##### 3. 依赖列
-    - `close`
-
-    ##### 4. 参数建议
-    - `window`：默认 100（建议范围 50~200）
-    - `lag`：默认 1
-    - `bins`：默认 10
-
-    ##### 5. 集成代码
-    ```python
-    @register_feature(
-        group="信息论",
-        level="level6_transforms",
-        description="传递熵，衡量滞后状态对当前收益的信息增益",
-        depends_on=[],
-        output_names=["transfer_entropy"]
-    )
-    def compute_transfer_entropy(df, features_df=None, window=100, lag=1, bins=10, **kwargs):
-        close = df["close"].values.astype(np.float64)
-
-        returns = np.full(len(close), np.nan)
-        for i in range(1, len(close)):
-            if close[i - 1] > 0:
-                returns[i] = (close[i] - close[i - 1]) / close[i - 1]
-
-        n = len(returns)
-        result = np.full(n, np.nan)
-
-        for i in range(window + lag, n):
-            # 单品种场景下使用收益率自传递熵代理
-            x = returns[i - window + 1 : i + 1]
-            y = returns[i - window + 1 : i + 1]
-
-            valid_x = []
-            valid_y = []
-            for j in range(window):
-                if not np.isnan(x[j]) and not np.isnan(y[j]):
-                    valid_x.append(x[j])
-                    valid_y.append(y[j])
-
-            if len(valid_x) > 30:
-                result[i] = _transfer_entropy_numba(
-                    np.array(valid_x), np.array(valid_y), lag=lag, bins=bins
-                )
-
-        return pd.DataFrame({"transfer_entropy": result}, index=df.index)
-    ```
-
-    ---
+```
 
 ### 3.4 风险测度类（Risk Measures）
 
 #### 特征 7：`conditional_value_at_risk`（条件风险价值）
 
 ##### 1. 元数据
+
 - **特征类别**：风险测度
 - **优先级**：P1
 - **理论依据**：CVaR（预期亏损）衡量尾部损失的平均值，比VaR更稳健。
 
 ##### 2. 计算公式
+
 ```
 CVaR_α = E[X | X < VaR_α]
 ```
 
 ##### 3. 依赖列
+
 - `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 50（建议范围 30~100）
 - `confidence_level`：默认 0.95（置信水平）
 
 ##### 5. 集成代码
+
 ```python
 @njit
 def _cvar_numba(returns, window, confidence_level=0.95):
@@ -1132,28 +1164,33 @@ def compute_conditional_value_at_risk(df, features_df=None, window=50, confidenc
     return pd.DataFrame({"conditional_value_at_risk": result}, index=df.index)
 ```
 
----
+------
 
 #### 特征 8：`expected_shortfall`（预期亏损）
 
 ##### 1. 元数据
+
 - **特征类别**：风险测度
 - **优先级**：P1
 - **理论依据**：预期亏损是CVaR的另一种形式，衡量极端损失。
 
 ##### 2. 计算公式
+
 ```
 ES_α = -E[X | X < -VaR_α]
 ```
 
 ##### 3. 依赖列
+
 - `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 50（建议范围 30~100）
 - `confidence_level`：默认 0.95（置信水平）
 
 ##### 5. 集成代码
+
 ```python
 @register_feature(
     group="风险测度",
@@ -1178,28 +1215,33 @@ def compute_expected_shortfall(df, features_df=None, window=50, confidence_level
     return pd.DataFrame({"expected_shortfall": result}, index=df.index)
 ```
 
----
+------
 
 #### 特征 16：`liquidity_adjusted_var`（流动性调整VaR）
 
 ##### 1. 元数据
+
 - **特征类别**：风险测度
 - **优先级**：P1
 - **理论依据**：考虑流动性的VaR，在低流动性时风险更大。
 
 ##### 2. 计算公式
+
 ```
 LVaR = VaR * (1 + liquidation_cost)
 ```
 
 ##### 3. 依赖列
+
 - `close`, `volume`
 
 ##### 4. 参数建议
+
 - `window`：默认 50（建议范围 30~100）
 - `confidence_level`：默认 0.95
 
 ##### 5. 集成代码
+
 ```python
 @register_feature(
     group="风险测度",
@@ -1252,29 +1294,34 @@ def compute_liquidity_adjusted_var(df, features_df=None, window=50, confidence_l
     return pd.DataFrame({"liquidity_adjusted_var": result}, index=df.index)
 ```
 
----
+------
 
 ### 3.5 市场微观结构效率类（Market Microstructure Efficiency）
 
 #### 特征 9：`market_microstructure_efficiency`（市场效率系数）
 
 ##### 1. 元数据
+
 - **特征类别**：市场微观结构
 - **优先级**：P2
 - **理论依据**：市场效率系数衡量价格对信息的反应速度，越接近1越有效。
 
 ##### 2. 计算公式
+
 ```
 efficiency = Var(r_t) / (2 * Cov(r_t, r_{t-1}))
 ```
 
 ##### 3. 依赖列
+
 - `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 50（建议范围 30~100）
 
 ##### 5. 集成代码
+
 ```python
 @register_feature(
     group="市场微观结构",
@@ -1331,27 +1378,32 @@ def compute_market_microstructure_efficiency(df, features_df=None, window=50, **
     return pd.DataFrame({"market_microstructure_efficiency": result}, index=df.index)
 ```
 
----
+------
 
 #### 特征 10：`price_discovery_ratio`（价格发现比率）
 
 ##### 1. 元数据
+
 - **特征类别**：市场微观结构
 - **优先级**：P2
 - **理论依据**：价格发现比率衡量开盘价对收盘价的信息含量。
 
 ##### 2. 计算公式
+
 ```
 pdr = |open - prev_close| / (high - low)
 ```
 
 ##### 3. 依赖列
+
 - `open`, `high`, `low`, `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 20（建议范围 10~50）
 
 ##### 5. 集成代码
+
 ```python
 @register_feature(
     group="市场微观结构",
@@ -1383,71 +1435,78 @@ def compute_price_discovery_ratio(df, features_df=None, window=20, **kwargs):
     return pd.DataFrame({"price_discovery_ratio": result_ma}, index=df.index)
 ```
 
+------
+
+```
+#### 特征 11：`cointegration_residual`（协整残差）
+
+##### 1. 元数据
+- **特征类别**：统计套利
+- **优先级**：P1
+- **理论依据**：协整残差可衡量均值回复强度，残差平稳性越强，统计套利信号越可靠。
+
+##### 2. 计算公式
+​```
+y_t = α + β x_t + ε_t
+cointegration_residual = -t_stat(Δε_t ~ ε_{t-1})
+​```
+
+##### 3. 依赖列
+- `close`（单品种代理使用 `close` 与 `EMA(close)`）
+
+##### 4. 参数建议
+- `window`：默认 60（建议范围 30~120）
+
+##### 5. 集成代码
+​```python
+@register_feature(
+    group="统计套利",
+    level="level6_transforms",
+    description="协整残差（单品种代理：close 与 ema(close)）",
+    depends_on=[],
+    output_names=["cointegration_residual"]
+)
+def compute_cointegration_residual(df, features_df=None, window=60, **kwargs):
+    close = df["close"].values.astype(np.float64)
+    ema = pd.Series(close).ewm(span=max(5, window // 3), adjust=False).mean().values.astype(np.float64)
+
+    # 返回协整强度代理（基于简化ADF t统计量）
+    result = _cointegration_test_numba(close, ema, window)
+    return pd.DataFrame({"cointegration_residual": result}, index=df.index)
+​```
+
 ---
-
-    #### 特征 11：`cointegration_residual`（协整残差）
-
-    ##### 1. 元数据
-    - **特征类别**：统计套利
-    - **优先级**：P1
-    - **理论依据**：协整残差可衡量均值回复强度，残差平稳性越强，统计套利信号越可靠。
-
-    ##### 2. 计算公式
-    ```
-    y_t = α + β x_t + ε_t
-    cointegration_residual = -t_stat(Δε_t ~ ε_{t-1})
-    ```
-
-    ##### 3. 依赖列
-    - `close`（单品种代理使用 `close` 与 `EMA(close)`）
-
-    ##### 4. 参数建议
-    - `window`：默认 60（建议范围 30~120）
-
-    ##### 5. 集成代码
-    ```python
-    @register_feature(
-        group="统计套利",
-        level="level6_transforms",
-        description="协整残差（单品种代理：close 与 ema(close)）",
-        depends_on=[],
-        output_names=["cointegration_residual"]
-    )
-    def compute_cointegration_residual(df, features_df=None, window=60, **kwargs):
-        close = df["close"].values.astype(np.float64)
-        ema = pd.Series(close).ewm(span=max(5, window // 3), adjust=False).mean().values.astype(np.float64)
-
-        # 返回协整强度代理（基于简化ADF t统计量）
-        result = _cointegration_test_numba(close, ema, window)
-        return pd.DataFrame({"cointegration_residual": result}, index=df.index)
-    ```
-
-    ---
+```
 
 
 
 #### 特征 12：`pairs_trading_signal`（配对交易信号）
 
 ##### 1. 元数据
+
 - **特征类别**：统计套利
 - **优先级**：P1
 - **理论依据**：基于协整残差的Z-Score，触发开平仓信号。
 
 ##### 2. 计算公式
+
 ```
 z_score = (residual - μ) / σ
 signal = -sign(z_score) * (|z_score| > threshold)
 ```
 
 ##### 3. 依赖列
+
 - `close`（需要两个品种）
 
 ##### 4. 参数建议
+
 - `window`：默认 60（建议范围 30~120）
 - `entry_threshold`：默认 2.0（开仓阈值）
 - `exit_threshold`：默认 0.5（平仓阈值）
 
 ##### 5. 集成代码
+
 ```python
 @register_feature(
     group="统计套利",
@@ -1508,27 +1567,32 @@ def compute_pairs_trading_signal(df, features_df=None, window=60, entry_threshol
     return pd.DataFrame({"pairs_trading_signal": result}, index=df.index)
 ```
 
----
+------
 
 ### 3.7 模式识别类（Pattern Recognition）
 
 #### 特征 13：`chart_pattern_strength`（图表模式强度）
 
 ##### 1. 元数据
+
 - **特征类别**：模式识别
 - **优先级**：P2
 - **理论依据**：识别经典图表形态，衡量形态的完整度。
 
 ##### 2. 计算公式
+
 基于极值点序列匹配经典形态
 
 ##### 3. 依赖列
+
 - `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 30（建议范围 20~60）
 
 ##### 5. 集成代码
+
 ```python
 @register_feature(
     group="模式识别",
@@ -1546,22 +1610,26 @@ def compute_chart_pattern_strength(df, features_df=None, window=30, **kwargs):
     return pd.DataFrame({"chart_pattern_strength": result}, index=df.index)
 ```
 
----
+------
 
 #### 特征 14：`candlestick_pattern_score`（K线形态得分）
 
 ##### 1. 元数据
+
 - **特征类别**：模式识别
 - **优先级**：P2
 - **理论依据**：识别经典K线组合形态，如十字星、吞没、锤子线等。
 
 ##### 2. 计算公式
+
 基于K线实体、影线相对比例的模式匹配得分
 
 ##### 3. 依赖列
+
 - `open`, `high`, `low`, `close`
 
 ##### 4. 集成代码
+
 ```python
 @register_feature(
     group="模式识别",
@@ -1581,28 +1649,33 @@ def compute_candlestick_pattern_score(df, features_df=None, **kwargs):
     return pd.DataFrame({"candlestick_pattern_score": result}, index=df.index)
 ```
 
----
+------
 
 ### 3.8 分形市场类（Fractal Market）
 
 #### 特征 15：`multifractal_spectrum`（多重分形谱）
 
 ##### 1. 元数据
+
 - **特征类别**：分形市场
 - **优先级**：P2
 - **理论依据**：多重分形谱宽度衡量市场的复杂性和多尺度特征。
 
 ##### 2. 计算公式
+
 基于配分函数的奇异性谱
 
 ##### 3. 依赖列
+
 - `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 100（建议范围 50~200）
 - `q_range`：默认 [-5, 5]（矩阶数范围）
 
 ##### 5. 集成代码
+
 ```python
 import numpy as np
 import pandas as pd
@@ -1737,32 +1810,38 @@ def compute_multifractal_spectrum(df, features_df=None, window=100, q_min=-5, q_
     return pd.DataFrame({"multifractal_spectrum": result}, index=df.index)
 ```
 
----
+------
 
 ### 3.9 波动率微笑类（Volatility Smile）
 
 #### 特征 17：`volatility_smile_slope`（波动率微笑斜率）
 
 ##### 1. 元数据
+
 - **特征类别**：波动率微笑
 - **优先级**：P2
 - **理论依据**：波动率微笑斜率反映市场对极端事件的定价偏差，正斜率表示看涨期权偏贵。
 
 ##### 2. 计算公式
+
 基于收益分布的分位数构造虚拟期权
+
 ```
 smile_slope = (σ_high - σ_low) / (return_high - return_low)
 ```
 
 ##### 3. 依赖列
+
 - `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 50（建议范围 30~100）
 - `quantile_high`：默认 0.75（高分位数）
 - `quantile_low`：默认 0.25（低分位数）
 
 ##### 5. 集成代码
+
 ```python
 @njit
 def _volatility_smile_slope_numba(returns, window, q_high=0.75, q_low=0.25):
@@ -1850,32 +1929,37 @@ def compute_volatility_smile_slope(df, features_df=None, window=50, quantile_hig
     return pd.DataFrame({"volatility_smile_slope": result}, index=df.index)
 ```
 
----
+------
 
 ### 3.10 期限结构高阶类（Term Structure Higher-order）
 
 #### 特征 18：`term_structure_curvature`（期限结构曲率）
 
 ##### 1. 元数据
+
 - **特征类别**：期限结构
 - **优先级**：P2
 - **理论依据**：波动率期限结构的曲率反映市场对中期波动的预期。
 
 ##### 2. 计算公式
+
 ```
 curvature = (σ_short + σ_long - 2 * σ_medium) / σ_medium
 ```
 
 ##### 3. 依赖列
+
 - `close`
 - 依赖特征：`volatility_5`, `volatility_20`, `volatility_60`
 
 ##### 4. 参数建议
+
 - `short_window`：默认 5
 - `medium_window`：默认 20
 - `long_window`：默认 60
 
 ##### 5. 集成代码
+
 ```python
 @register_feature(
     group="期限结构",
@@ -1899,31 +1983,36 @@ def compute_term_structure_curvature(df, features_df=None, **kwargs):
     return pd.DataFrame({"term_structure_curvature": curvature}, index=df.index)
 ```
 
----
+------
 
 ### 3.11 贝叶斯推断类（Bayesian Inference）
 
 #### 特征 19：`bayesian_volatility`（贝叶斯波动率）
 
 ##### 1. 元数据
+
 - **特征类别**：贝叶斯推断
 - **优先级**：P2
 - **理论依据**：用贝叶斯方法估计波动率，结合先验信息，更稳健。
 
 ##### 2. 计算公式
+
 ```
 σ²_Bayes = (νσ²_prior + nσ²_sample) / (ν + n)
 ```
 
 ##### 3. 依赖列
+
 - `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 50（建议范围 30~100）
 - `prior_vol`：默认 0.01（先验波动率）
 - `prior_strength`：默认 10（先验强度）
 
 ##### 5. 集成代码
+
 ```python
 @njit
 def _bayesian_volatility_numba(returns, window, prior_vol=0.01, prior_strength=10):
@@ -1985,30 +2074,35 @@ def compute_bayesian_volatility(df, features_df=None, window=50, prior_vol=0.01,
     return pd.DataFrame({"bayesian_volatility": result}, index=df.index)
 ```
 
----
+------
 
 ### 3.12 马尔可夫场类（Markov Field）
 
 #### 特征 20：`markov_regime_probability`（马尔可夫状态概率）
 
 ##### 1. 元数据
+
 - **特征类别**：马尔可夫场
 - **优先级**：P2
 - **理论依据**：用两状态马尔可夫转换模型估计当前处于高波动/低波动状态的概率。
 
 ##### 2. 计算公式
+
 ```
 P(regime_t = 1 | returns) = logistic(α + β * returns_t-1 + γ * σ_t-1)
 ```
 
 ##### 3. 依赖列
+
 - `close`
 
 ##### 4. 参数建议
+
 - `window`：默认 100（建议范围 50~200）
 - `transition_prob`：默认 0.95（状态转移概率）
 
 ##### 5. 集成代码
+
 ```python
 @njit
 def _markov_regime_probability_numba(returns, window, transition_prob=0.95):
@@ -2111,34 +2205,34 @@ def compute_markov_regime_probability(df, features_df=None, window=100, transiti
     return pd.DataFrame({"markov_regime_probability": result}, index=df.index)
 ```
 
----
+------
 
 ## 四、逐因子审计结果（公式正确性 / 未来函数 / Bug修复）
 
 ### 4.1 20个因子逐项审计结论
 
-| 序号 | 特征名 | 公式一致性 | 未来函数检查 | 结论 |
-| --- | --- | --- | --- | --- |
-| 1 | `lyapunov_exponent_refined` | 基本一致 | 未发现 | 通过 |
-| 2 | `correlation_dimension` | 基本一致 | 未发现 | 通过 |
-| 3 | `martingale_difference` | 基本一致 | 未发现 | 通过 |
-| 4 | `variance_ratio_test` | 基本一致 | 未发现 | 通过 |
-| 5 | `mutual_information` | **存在实现bug**（窗口切片错位） | 未发现 | **已修复** |
-| 6 | `transfer_entropy` | 文档缺少可直接注册实现 | 未发现 | **已补齐** |
-| 7 | `conditional_value_at_risk` | 基本一致 | 未发现 | 通过 |
-| 8 | `expected_shortfall` | 基本一致 | 未发现 | 通过 |
-| 9 | `market_microstructure_efficiency` | 基本一致 | 未发现 | 通过 |
-| 10 | `price_discovery_ratio` | 基本一致 | 未发现 | 通过 |
-| 11 | `cointegration_residual` | 文档缺少正式实现 | 未发现 | **已补齐** |
-| 12 | `pairs_trading_signal` | **存在逻辑bug**（平仓阈值条件） | 未发现 | **已修复** |
-| 13 | `chart_pattern_strength` | 基本一致 | 未发现 | 通过 |
-| 14 | `candlestick_pattern_score` | 基本一致 | 未发现 | 通过 |
-| 15 | `multifractal_spectrum` | 基本一致 | 未发现 | 通过 |
-| 16 | `liquidity_adjusted_var` | **流动性成本公式退化**（近似常数） | 未发现 | **已修复** |
-| 17 | `volatility_smile_slope` | 基本一致 | 未发现 | 通过 |
-| 18 | `term_structure_curvature` | 基本一致 | 未发现 | 通过 |
-| 19 | `bayesian_volatility` | 基本一致 | 未发现 | 通过 |
-| 20 | `markov_regime_probability` | **存在概率退化bug** | 未发现 | **已修复** |
+| 序号 | 特征名                             | 公式一致性                         | 未来函数检查 | 结论       |
+| ---- | ---------------------------------- | ---------------------------------- | ------------ | ---------- |
+| 1    | `lyapunov_exponent_refined`        | 基本一致                           | 未发现       | 通过       |
+| 2    | `correlation_dimension`            | 基本一致                           | 未发现       | 通过       |
+| 3    | `martingale_difference`            | 基本一致                           | 未发现       | 通过       |
+| 4    | `variance_ratio_test`              | 基本一致                           | 未发现       | 通过       |
+| 5    | `mutual_information`               | **存在实现bug**（窗口切片错位）    | 未发现       | **已修复** |
+| 6    | `transfer_entropy`                 | 文档缺少可直接注册实现             | 未发现       | **已补齐** |
+| 7    | `conditional_value_at_risk`        | 基本一致                           | 未发现       | 通过       |
+| 8    | `expected_shortfall`               | 基本一致                           | 未发现       | 通过       |
+| 9    | `market_microstructure_efficiency` | 基本一致                           | 未发现       | 通过       |
+| 10   | `price_discovery_ratio`            | 基本一致                           | 未发现       | 通过       |
+| 11   | `cointegration_residual`           | 文档缺少正式实现                   | 未发现       | **已补齐** |
+| 12   | `pairs_trading_signal`             | **存在逻辑bug**（平仓阈值条件）    | 未发现       | **已修复** |
+| 13   | `chart_pattern_strength`           | 基本一致                           | 未发现       | 通过       |
+| 14   | `candlestick_pattern_score`        | 基本一致                           | 未发现       | 通过       |
+| 15   | `multifractal_spectrum`            | 基本一致                           | 未发现       | 通过       |
+| 16   | `liquidity_adjusted_var`           | **流动性成本公式退化**（近似常数） | 未发现       | **已修复** |
+| 17   | `volatility_smile_slope`           | 基本一致                           | 未发现       | 通过       |
+| 18   | `term_structure_curvature`         | 基本一致                           | 未发现       | 通过       |
+| 19   | `bayesian_volatility`              | 基本一致                           | 未发现       | 通过       |
+| 20   | `markov_regime_probability`        | **存在概率退化bug**                | 未发现       | **已修复** |
 
 > 未来函数判定说明：上述实现均仅使用 `t` 及历史窗口 `[t-window+1, t]` 数据，未使用未来索引（如 `shift(-k)`）或前视切片。
 
@@ -2395,7 +2489,7 @@ def _markov_regime_probability_numba(returns, window, transition_prob=0.95):
     return result
 ```
 
----
+------
 
 ## 四、第五辑20个特征汇总表
 
@@ -2422,7 +2516,7 @@ def _markov_regime_probability_numba(returns, window, transition_prob=0.95):
 | 19   | `bayesian_volatility`              | 贝叶斯推断 | P2     | close                  | window=50, prior_vol=0.01, prior_strength=10 |
 | 20   | `markov_regime_probability`        | 马尔可夫场 | P2     | close                  | window=100, transition_prob=0.95             |
 
----
+------
 
 ## 五、五辑总计100个特征汇总
 
@@ -2435,20 +2529,24 @@ def _markov_regime_probability_numba(returns, window, transition_prob=0.95):
 | 第五辑   | 混沌理论、鞅测度、信息论、风险测度、统计套利、模式识别、分形市场、波动率微笑、期限结构、贝叶斯推断、马尔可夫场等 | 20            | P1-P2      |
 | **总计** | **25+个特征类别**                                            | **100个特征** | **P0-P4**  |
 
----
+------
 
 ## 六、集成步骤总结
 
 ### 步骤1：添加辅助函数
+
 将第五辑中的所有Numba辅助函数添加到 `features/feature_engineering_enhanced.py` 中。
 
 ### 步骤2：创建特征文件
+
 在 `features/custom_features.py` 中添加20个特征的完整代码（每个特征对应一个 `@register_feature` 装饰的函数）。
 
 ### 步骤3：运行单元测试
+
 为每个特征编写单元测试，验证计算逻辑的正确性。
 
 ### 步骤4：集成验证
+
 运行完整流水线，检查特征是否被正确计算、筛选、训练。
 
 ```bash
@@ -2456,15 +2554,9 @@ python run_real_data_pipeline.py --period 5min --n-rows 5000
 ```
 
 ### 步骤5：性能优化
+
 确保P0、P1优先级的特征已使用Numba加速版本。
 
----
+------
 
 **请严格按照以上代码和说明，将20个精选特征集成到 hfml 项目中。每个特征都已提供完整的可执行代码、单元测试用例和参数说明**
-
-
-
-
-
-
-
