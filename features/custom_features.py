@@ -3261,7 +3261,7 @@ def compute_volume_oi_correlation(df, features_df=None, window: int = 20, **kwar
 @register_feature(                                               # [新增]
     group="持仓量结构",                                           # [新增]
     level="level4_micro",                                        # [新增]
-    description="持仓量季节性模式（滚动分位），仅使用历史窗口",   # [新增]
+    description="持仓量历史分位排名（滚动窗口内当前值的百分位位置）",  # [新增]
     depends_on=[],                                               # [新增]
     output_names=["oi_seasonal_pattern"],                        # [新增]
 )                                                                # [新增]
