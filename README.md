@@ -18,9 +18,12 @@
 - [特征列表](#特征列表)
 - [预测目标](#预测目标)
 - [特征评估报告](#特征评估报告)
+- [数据预处理](#数据预处理)
+- [参数优化](#参数优化)
 - [Numba性能加速](#numba性能加速)
 - [安装与运行](#安装与运行)
 - [运行示例与结果解读](#运行示例与结果解读)
+- [快速开始：典型使用流程](#快速开始典型使用流程)
 
 ---
 
@@ -102,6 +105,62 @@ GitProject/
 | `SMART_LABEL_CONFIG` | 智能标签配置（阈值/强信号倍数/质量权重） |
 | `HYBRID_SYSTEM_CONFIG` | 混合专家系统配置（信号阈值/仓位/Kelly参数） |
 | `FEATURE_HIERARCHY` | 6层分层特征结构（level1_price → level6_transforms） |
+| `COST_CONFIG` | 交易成本配置（手续费率/最低手续费/印花税） |
+| `STOP_CONFIG` | 止盈止损配置（止损率/止盈率） |
+| `VAR_CONFIG` | VaR风险度量配置（VaR阈值/仓位缩放因子） |
+| `LSTM_FEATURE_SELECTION_CONFIG` | 15分钟LSTM特征预筛选配置（XGBoost参数/筛选参数） |
+
+#### 新增配置项详细说明
+
+**`COST_CONFIG` — 交易成本配置：**
+
+```python
+COST_CONFIG = {
+    'buy_rate': 0.0003,     # 买入手续费率（万三）
+    'buy_min': 5.0,         # 最低买入手续费（元）
+    'sell_rate': 0.0003,    # 卖出手续费率（万三）
+    'sell_min': 5.0,        # 最低卖出手续费（元）
+    'stamp_duty': 0.001,    # 印花税率（千一，仅卖出收取）
+}
+```
+
+**`STOP_CONFIG` — 止盈止损配置：**
+
+```python
+STOP_CONFIG = {
+    'stop_loss_rate': -0.03,   # 止损触发线：单笔亏损达到-3%时平仓
+    'stop_profit_rate': 0.05,  # 止盈触发线：单笔盈利达到+5%时平仓
+}
+```
+
+**`VAR_CONFIG` — VaR风险门控配置：**
+
+```python
+VAR_CONFIG = {
+    'var99_gate': 0.02,              # 99% VaR门控阈值（2%），当预测的单日VaR超过此值时触发降仓
+    'position_scale_on_breach': 0.5, # VaR超限时仓位缩放因子（降至50%仓位）
+}
+```
+
+**`LSTM_FEATURE_SELECTION_CONFIG` — 15分钟LSTM特征预筛选配置：**
+
+```python
+LSTM_FEATURE_SELECTION_CONFIG = {
+    'xgb_params': {
+        'n_estimators': 200,     # XGBoost筛选器使用200棵树
+        'max_depth': 5,          # 树深度限制为5，防止过拟合
+        'learning_rate': 0.05,   # 较小学习率确保特征重要性评估稳定
+        'subsample': 0.8,        # 80%数据采样
+        'colsample_bytree': 0.8, # 80%特征采样
+    },
+    'selection': {
+        'n_features': 25,        # 默认筛选25个最重要特征
+        'threshold': 'median',   # 重要性阈值方法：'median'(中位数), 'mean'(均值), 或具体数值
+        'use_shap': False,       # 是否使用SHAP值验证（需安装shap库）
+        'cv_splits': 5,          # 5折时间序列交叉验证
+    },
+}
+```
 
 ### `features/feature_engineering.py` — 特征工程主模块
 
@@ -850,13 +909,59 @@ def compute_rsi_14_slope(df, features_df=None, **kwargs):
     return pd.DataFrame({"rsi_14_slope_custom": slope}, index=df.index)
 ```
 
-**系统自动处理的事项**：
+#### `@register_feature` 装饰器参数详细说明
 
-1. `compute_all_features()` 自动发现并计算该特征
-2. `get_feature_hierarchy()` 自动将 `rsi_14_slope_custom` 归入 `level3_momentum`
-3. `get_recommended_feature_groups()` 自动将其加入 `动量指标` 分组
-4. 特征筛选（ExtraTrees/RF/XGBoost）自动包含该特征
-5. 模型训练自动使用该特征（无需修改 `ml_pipeline.py`）
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `group` | str | ✅ | 特征所属的功能分组，对应 `feature_selector.py` 中 `get_recommended_feature_groups()` 的键名。常用分组：`"动量指标"`, `"波动率"`, `"微观结构"`, `"成交量"`, `"持仓量(仓差)"`, `"K线形态"`, `"趋势指标"`, `"时间序列"`, `"量价关系"` 等 |
+| `level` | str | ✅ | 特征在分层结构中的层级，对应 `config.py` 的 `FEATURE_HIERARCHY` 键名。可选值：`"level1_price"`, `"level2_trend"`, `"level3_momentum"`, `"level4_micro"`, `"level5_cross"`, `"level6_transforms"` |
+| `description` | str | ❌ | 特征的简短文字描述，用于文档生成和调试输出 |
+| `depends_on` | list | ❌ | 该特征依赖的已有特征名称列表（仅指 `features_df` 中的特征，不含 `df` 原始列如 close/volume）。系统会自动检查 `features_df` 中是否存在这些列，缺失时打印警告并跳过计算 |
+| `output_names` | list | ❌ | 该函数输出的列名列表。用于注册表的元数据查询和去重检查 |
+
+#### 完整示例：带依赖检查的新特征
+
+以下示例展示如何添加一个依赖 `atr` 和 `volume` 的复合特征：
+
+```python
+@register_feature(
+    group="波动率",
+    level="level5_cross",
+    description="ATR与成交量的交互比率，衡量单位成交量承载的波动幅度",
+    depends_on=["atr"],               # 声明依赖已有的atr特征
+    output_names=["atr_volume_ratio"],
+)
+def compute_atr_volume_ratio(df, features_df=None, **kwargs):
+    """ATR与成交量的比率 — 衡量单位成交量承载的波动幅度。"""
+    atr = features_df["atr"]
+    volume = df["volume"]
+    vol_ma = volume.rolling(20).mean()
+    ratio = atr / (vol_ma + 1e-12)  # 避免除零
+    return pd.DataFrame({"atr_volume_ratio": ratio}, index=df.index)
+```
+
+保存文件后，**无需修改任何其他代码**，运行验证：
+
+```python
+from features.feature_engineering import compute_all_features
+import pandas as pd
+
+df = pd.DataFrame({...})  # 你的OHLCV数据
+features = compute_all_features(df)
+
+# 新特征已自动包含
+assert "atr_volume_ratio" in features.columns
+print(f"✓ 新特征已自动计算，非空比例: {features['atr_volume_ratio'].notna().mean():.2%}")
+```
+
+**系统自动处理的完整链路**：
+
+1. **特征计算**：`compute_all_features()` 自动发现并计算该特征（通过 `importlib` 导入 `custom_features.py`）
+2. **层级归类**：`get_feature_hierarchy()` 自动将 `atr_volume_ratio` 归入 `level5_cross`
+3. **分组归类**：`get_recommended_feature_groups()` 自动将其加入 `波动率` 分组
+4. **特征筛选**：ExtraTrees/RandomForest/XGBoost 筛选器自动包含该特征进行重要性评估
+5. **模型训练**：模型训练自动使用该特征（`ml_pipeline.py` 和 `run_real_data_pipeline.py` 均无需修改）
+6. **去重保护**：若 `atr_volume_ratio` 已由增强模块计算，注册表自动跳过（避免重复列）
 
 ### 注册表 API
 
@@ -864,10 +969,10 @@ def compute_rsi_14_slope(df, features_df=None, **kwargs):
 |------|------|
 | `FeatureRegistry()` | 获取全局单例注册表 |
 | `.register(func, group, level, ...)` | 注册一个特征函数 |
-| `.get_all_entries()` | 获取所有已注册条目 |
-| `.get_group_mapping()` | 获取 `{分组名: [特征名]}` 映射 |
-| `.get_hierarchy_mapping()` | 获取 `{层级名: [特征名]}` 映射 |
-| `.compute_registered_features(df, features_df)` | 执行所有注册特征的计算 |
+| `.get_all_entries()` | 获取所有已注册条目（返回列表，每项含 `func`, `group`, `level`, `output_names` 等字段） |
+| `.get_group_mapping()` | 获取 `{分组名: [特征名]}` 映射（自动合并到 `get_recommended_feature_groups()`） |
+| `.get_hierarchy_mapping()` | 获取 `{层级名: [特征名]}` 映射（自动合并到 `get_feature_hierarchy()`） |
+| `.compute_registered_features(df, features_df)` | 执行所有注册特征的计算，返回合并后的 DataFrame（自动跳过已存在列） |
 | `.clear()` | 清空注册表（仅用于测试） |
 
 ### 函数签名规范
@@ -878,10 +983,11 @@ def compute_rsi_14_slope(df, features_df=None, **kwargs):
 def compute_xxx(df: pd.DataFrame, features_df: pd.DataFrame = None, **kwargs) -> pd.DataFrame:
     """
     参数:
-        df: 原始OHLCV数据
-        features_df: 已计算的特征矩阵（可用来引用 depends_on 中声明的依赖）
+        df: 原始OHLCV数据（包含 open, high, low, close, volume, open_interest 列）
+        features_df: 已计算的特征矩阵（可用来引用 depends_on 中声明的依赖特征）
+        **kwargs: 预留扩展参数
     返回:
-        pd.DataFrame，列名即为新增特征名
+        pd.DataFrame，列名即为新增特征名，索引必须与 df.index 对齐
     """
 ```
 
@@ -1431,6 +1537,264 @@ python ml_pipeline.py --hybrid --period 5min --n-rows 5000
 | **高级波动率** | **4** | **volatility_regime/vol_ratio/atr_pct/range_pct** |
 | **深度变换** | **~24** | **非线性/跨周期/变化率/条件/交互变换特征** |
 
+### 特征筛选方法详细说明
+
+#### `extra_trees_importance_stability()` — ExtraTrees重要性+稳定性评估
+
+使用 ExtraTreesClassifier（或 Regressor）训练模型，获取特征重要性并计算稳定性得分。
+
+**参数说明：**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `X` | pd.DataFrame | — | 特征矩阵（所有列自动参与评估，包括注册表新增特征） |
+| `y` | pd.Series | — | 预测目标变量 |
+| `n_estimators` | int | `200` | ExtraTrees的树数量。越大越稳定，但计算更慢 |
+| `top_n` | int | `50` | 返回排名前N的特征 |
+| `task` | str | `"classification"` | 任务类型：`"classification"` 使用 Classifier，`"regression"` 使用 Regressor |
+
+**返回 DataFrame 的列说明：**
+
+| 列名 | 说明 |
+|------|------|
+| `feature` | 特征名称 |
+| `importance` | 特征重要性均值（基于基尼不纯度或方差减少） |
+| `std` | 特征重要性的标准差（跨树的波动，越小越稳定） |
+| `stability_score` | 稳定性得分 = `importance / (std + 1e-8)`，综合衡量重要性和稳定性 |
+
+**使用示例：**
+
+```python
+from backtest.feature_selector import FeatureSelector
+
+selector = FeatureSelector()
+result_df = selector.extra_trees_importance_stability(X, y, n_estimators=200, top_n=30)
+
+# 查看结果（按 stability_score 降序排列）
+print(result_df.head(10))
+#           feature  importance       std  stability_score
+# 0        vwap_dev    0.01523   0.00089       17.11
+# 1       vol_state    0.01412   0.00095       14.86
+# 2      vol_zscore    0.01328   0.00102       13.02
+# ...
+```
+
+#### `random_forest_importance()` — RandomForest特征重要性
+
+使用 RandomForestClassifier（或 Regressor）训练模型，获取特征重要性排名。
+
+**参数说明：**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `X` | pd.DataFrame | — | 特征矩阵 |
+| `y` | pd.Series | — | 预测目标变量 |
+| `n_estimators` | int | `300` | RandomForest的树数量 |
+| `top_n` | int | `50` | 返回排名前N的特征 |
+| `task` | str | `"classification"` | 任务类型 |
+
+**返回 pd.Series**：特征名为索引，重要性为值，按降序排列（Top N）。
+
+**使用示例：**
+
+```python
+importance_series = selector.random_forest_importance(X, y, n_estimators=300, top_n=20)
+
+print(importance_series.head(5))
+# vwap_dev       0.01654
+# atr_pct        0.01523
+# vol_zscore     0.01489
+# rsi_14         0.01412
+# macd_hist      0.01387
+```
+
+#### 在 `run_real_data_pipeline.py` 中的使用方式
+
+特征筛选在流水线 Step 3 自动执行（除非指定 `--skip-feature-selection`）：
+
+```bash
+# 启用特征筛选（默认行为）
+python run_real_data_pipeline.py --period 5min
+
+# 跳过特征筛选（快速测试，使用全部特征）
+python run_real_data_pipeline.py --period 5min --skip-feature-selection
+```
+
+筛选结果保存在 `data/mx/feature_selection_report_{period}.md`，包含：
+
+1. **ExtraTrees 稳定性排名（Top 30）** — 按 `stability_score` 降序
+2. **RandomForest 重要性排名（Top 30）** — 按 `importance` 降序
+3. **（15分钟）XGBoost 预筛选结果** — 5折CV重要性均值/标准差及动态选择数量
+
+---
+
+## 数据预处理
+
+### L2 归一化 Pipeline
+
+`hyperopt_runner.py` 中的 `build_l2_pipeline_lgbm()` 函数构建了包含 L2 归一化的 scikit-learn Pipeline，可与贝叶斯优化结合使用。
+
+**使用示例：**
+
+```python
+from hyperopt_runner import build_l2_pipeline_lgbm
+
+# 构建L2归一化 + LightGBM Pipeline
+pipeline = build_l2_pipeline_lgbm(
+    n_estimators=200,
+    max_depth=5,
+    learning_rate=0.05,
+)
+
+# Pipeline内部结构：
+# 1. Normalizer(norm='l2')  — 对每个样本进行L2归一化（使特征向量长度为1）
+# 2. LGBMClassifier(...)    — LightGBM分类器
+
+# 训练和预测
+pipeline.fit(X_train, y_train)
+y_pred = pipeline.predict(X_test)
+accuracy = pipeline.score(X_test, y_test)
+print(f"L2 Pipeline 准确率: {accuracy:.4f}")
+```
+
+**结合贝叶斯优化：**
+
+```python
+from hyperopt_runner import run_bayesopt_pipeline_lightgbm
+
+# 在贝叶斯优化中自动搜索最佳超参（内部使用L2 Pipeline）
+result = run_bayesopt_pipeline_lightgbm(X_train, y_train, n_iter=30)
+print(f"最佳参数: {result['params']}")
+print(f"最佳得分: {result['target']:.4f}")
+```
+
+### 因子批量加载 (`factor_loader.py`)
+
+`factor_loader.py` 用于批量加载预计算的因子数据（pickle格式），支持日期对齐和多因子合并。
+
+**因子文件目录结构：**
+
+```
+factors/
+├── index.pkl            # 索引文件：包含 ts_code 和 trade_date 的 DataFrame
+├── rsi_14.pkl           # 因子文件：与 index.pkl 行对齐的 Series/DataFrame
+├── macd_hist.pkl
+├── vol_ratio.pkl
+└── ...
+```
+
+**使用示例：**
+
+```python
+from factor_loader import load_factors
+
+# 加载指定因子
+factors_df = load_factors(
+    index_pkl_path="factors/index.pkl",     # 索引文件路径
+    factors_dir="factors/",                  # 因子文件目录
+    factor_list=["rsi_14", "macd_hist", "vol_ratio"],  # 要加载的因子名
+    start_date="2024-01-01",                 # 可选：起始日期
+    end_date="2024-12-31",                   # 可选：结束日期
+)
+
+# 返回的 DataFrame 包含多重索引 [ts_code, trade_date]
+# 可直接用于模型训练
+print(factors_df.shape)    # (n_samples, 3)
+print(factors_df.columns)  # ['rsi_14', 'macd_hist', 'vol_ratio']
+```
+
+---
+
+## 参数优化
+
+### Optuna 超参搜索
+
+`hyperopt_runner.py` 中的 `run_optuna_for_hfml()` 函数基于 Optuna 框架进行自动超参搜索，使用 TimeSeriesSplit 交叉验证避免前视偏差。
+
+**函数签名：**
+
+```python
+def run_optuna_for_hfml(period: str, target_name: str, n_trials: int = 50) -> Tuple[dict, float]:
+    """
+    参数:
+        period: K线周期 ("1min", "5min", "15min")
+        target_name: 预测目标名 ("future_direction", "future_return" 等)
+        n_trials: Optuna搜索次数（每次试验训练一个模型并评估）
+    返回:
+        best_params: 最佳超参数字典（如 {'n_estimators': 300, 'max_depth': 6, ...}）
+        best_value: 最佳验证集得分
+    """
+```
+
+**在 `run_real_data_pipeline.py` 中的集成方式：**
+
+流水线 Step 4 自动调用 Optuna 超参搜索（通过 `--n-trials` 参数控制搜索次数）：
+
+```bash
+# 使用30次试验搜索（默认）
+python run_real_data_pipeline.py --period 5min --n-trials 30
+
+# 使用50次试验搜索（更充分，耗时更长）
+python run_real_data_pipeline.py --period 5min --n-trials 50
+
+# 跳过超参搜索（使用config.py中的默认参数）
+python run_real_data_pipeline.py --period 5min --n-trials 0
+```
+
+**独立调用示例：**
+
+```python
+from hyperopt_runner import run_optuna_for_hfml
+
+# 搜索5分钟周期的最佳XGBoost参数
+best_params, best_value = run_optuna_for_hfml(
+    period="5min",
+    target_name="future_direction",
+    n_trials=30,
+)
+
+print(f"最佳参数: {best_params}")
+print(f"最佳验证集准确率: {best_value:.4f}")
+
+# 将最佳参数应用到模型训练
+from models.ml_models import create_model
+model = create_model("5min", task="classification")
+model.model.set_params(**best_params)  # 应用搜索到的参数
+model.train(X_train, y_train, X_val, y_val)
+```
+
+### LSTM 早停（Patience）
+
+`models/ml_models.py` 中的 `LSTMModel` 支持 EarlyStopping 回调，防止过拟合。
+
+**配置方式（在 `config.py` 中）：**
+
+```python
+LSTM_CONFIG = {
+    'units': 64,
+    'dropout': 0.2,
+    'epochs': 50,
+    'batch_size': 32,
+    'patience': 10,  # 验证集loss连续10个epoch无改善时停止训练
+}
+```
+
+**训练时自动启用：**
+
+```python
+from models.ml_models import LSTMModel
+
+model = LSTMModel(task="classification")
+# patience 自动从 LSTM_CONFIG 读取，默认为10
+
+model.train(X_train, y_train, X_val, y_val)
+# 内部行为：
+# 1. 若提供了 X_val/y_val，自动添加 EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+# 2. 验证集loss连续10个epoch无改善 → 提前终止训练
+# 3. 自动恢复验证集上表现最佳的模型权重（restore_best_weights=True）
+# 4. 若未提供验证集，跳过EarlyStopping，训练满 epochs 轮
+```
+
 ---
 
 ## Numba性能加速
@@ -1692,6 +2056,86 @@ python ml_pipeline.py --multi-timeframe --n-rows 1000
 - **一致性0.698**: 三个周期之间的方向一致程度
 
 > **注意**：当前使用模拟随机数据，实际商品期货数据的预测效果会因市场行情不同而有差异。接入真实行情数据后需要重新训练和评估。
+
+---
+
+## 快速开始：典型使用流程
+
+从数据加载到模型部署的完整步骤指南。
+
+### 第1步：安装依赖
+
+```bash
+pip install -r requirements.txt
+```
+
+### 第2步：准备数据
+
+将白银(ag)K线CSV放入 `data/klines/KQi@SHFEag/` 目录（若无真实数据，系统自动生成模拟数据）：
+
+```
+data/klines/KQi@SHFEag/
+├── KQi@SHFEag_1min.csv
+├── KQi@SHFEag_5min.csv
+└── KQi@SHFEag_15min.csv
+```
+
+CSV 要求包含列：`dt`（格式如 `2023-01-01 09:01:00`）, `open, high, low, close, volume, close_oi`
+
+### 第3步：运行完整流水线
+
+```bash
+# 5分钟周期 — 标准流程（推荐首次运行）
+python run_real_data_pipeline.py --period 5min
+
+# 15分钟周期 — 含XGBoost预筛选 + LSTM训练
+python run_real_data_pipeline.py --period 15min --xgb-n-features 30
+
+# 1分钟周期 — 快速测试（跳过特征筛选）
+python run_real_data_pipeline.py --period 1min --skip-feature-selection
+```
+
+### 第4步：查看输出文件
+
+```bash
+ls data/mx/
+# feature_selection_report_5min.md   ← 特征筛选报告
+# backtest_report_5min.md            ← 回测报告（胜率/Sharpe/最大回撤）
+# predictions_5min.csv               ← 预测结果
+# models/5min_xgboost_20260212.pkl   ← 已训练模型
+# models/5min_xgboost_20260212_features.txt  ← 特征列表
+```
+
+### 第5步：解读回测报告
+
+打开 `data/mx/backtest_report_5min.md`，关注以下指标：
+
+| 指标 | 说明 | 合格线 |
+|------|------|--------|
+| accuracy | 分类准确率 | > 0.52 |
+| win_rate | 交易胜率 | > 0.50 |
+| profit_factor | 盈亏比（总盈利/总亏损） | > 1.0 |
+| sharpe_ratio | 年化Sharpe比率 | > 0.5 |
+| max_drawdown | 最大回撤 | < 15% |
+
+### 第6步（可选）：超参优化
+
+```bash
+# 使用Optuna搜索50次以提升模型性能
+python run_real_data_pipeline.py --period 5min --n-trials 50
+```
+
+### 第7步（可选）：添加自定义特征
+
+在 `features/custom_features.py` 中添加新特征（无需修改任何下游代码）：
+
+```python
+@register_feature(group="动量指标", level="level3_momentum", output_names=["my_feature"])
+def compute_my_feature(df, features_df=None, **kwargs):
+    return pd.DataFrame({"my_feature": df["close"].pct_change(10)}, index=df.index)
+```
+
+保存后重新运行流水线，新特征自动参与计算、筛选和训练。
 
 ---
 
