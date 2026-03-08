@@ -1,0 +1,813 @@
+"""
+商品期货机器学习量化模型 - 主流程
+ML Pipeline for commodity futures quantitative trading.
+
+完整流程:
+1. 数据加载与预处理
+2. 特征工程（计算衍生指标）
+3. 模型训练与预测
+4. 回测与特征选择
+5. 结果评估
+
+使用方法:
+    python ml_pipeline.py --period 5min --target future_direction
+"""
+
+import argparse
+import logging
+
+import numpy as np
+import pandas as pd
+
+from features.feature_engineering import compute_all_features, compute_prediction_targets, get_feature_hierarchy
+from models.ml_models import create_model, LightGBMModel, XGBoostModel
+from models.ensemble_model import EnsembleModel
+from models.position_sizing import RiskBudgetManager, compute_performance_metrics
+from models.adaptive_learning import AdaptiveModelManager
+from backtest.feature_selector import FeatureSelector, get_recommended_feature_groups
+from config import (ML_FRAMEWORKS, PREDICTION_TARGETS, BACKTEST_CONFIG,
+                    ENSEMBLE_CONFIG, POSITION_CONFIG, ADAPTIVE_CONFIG,
+                    MULTI_TIMEFRAME_CONFIG, LSTM_FEATURE_SELECTION_CONFIG,
+                    SMART_LABEL_CONFIG, HYBRID_SYSTEM_CONFIG,
+                    COST_CONFIG, VAR_CONFIG)  # [新增]
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
+
+def generate_sample_data(n_rows=5000, period="5min"):
+    """
+    生成模拟K线数据用于演示。
+
+    Parameters
+    ----------
+    n_rows : int
+        数据行数
+    period : str
+        K线周期
+
+    Returns
+    -------
+    pd.DataFrame
+        模拟K线数据
+    """
+    np.random.seed(42)
+
+    freq_map = {"1min": "1min", "5min": "5min", "15min": "15min"}
+    freq = freq_map.get(period, "5min")
+
+    dates = pd.date_range(start="2024-01-01", periods=n_rows, freq=freq)
+
+    # 模拟价格序列（随机游走）
+    returns = np.random.normal(0, 0.002, n_rows)
+    close = 5000 * np.exp(np.cumsum(returns))
+
+    # 生成OHLCV数据
+    noise = np.random.uniform(0.001, 0.005, n_rows)
+    high = close * (1 + noise)
+    low = close * (1 - noise)
+    open_price = close * (1 + np.random.normal(0, 0.001, n_rows))
+
+    volume = np.random.randint(100, 10000, n_rows).astype(float)
+    open_interest = 50000 + np.cumsum(np.random.randint(-100, 100, n_rows)).astype(float)
+    open_interest = np.maximum(open_interest, 1000)  # 确保持仓量为正
+
+    df = pd.DataFrame({
+        "datetime": dates,
+        "open": open_price,
+        "high": high,
+        "low": low,
+        "close": close,
+        "volume": volume,
+        "open_interest": open_interest,
+    })
+    df.set_index("datetime", inplace=True)
+    return df
+
+
+def prepare_data(df, period="5min", target_name="future_direction", horizon=None):
+    """
+    准备训练数据：计算特征和目标变量。
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        原始K线数据
+    period : str
+        K线周期
+    target_name : str
+        预测目标名称
+    horizon : int, optional
+        预测周期
+
+    Returns
+    -------
+    tuple
+        (X, y) 特征矩阵和目标变量
+    """
+    logger.info(f"计算 {period} 周期衍生指标...")
+    features = compute_all_features(df, period=period)
+
+    if horizon is None:
+        horizon = PREDICTION_TARGETS.get(target_name, {}).get("horizon", {}).get(period, 5)
+
+    logger.info(f"计算预测目标: {target_name}, 预测周期: {horizon}")
+    targets = compute_prediction_targets(df, horizon=horizon)
+
+    # 合并特征和目标
+    data = pd.concat([features, targets], axis=1)
+    data.dropna(inplace=True)
+
+    X = data[features.columns]
+    y = data[target_name]
+
+    # 替换无穷值
+    X = X.replace([np.inf, -np.inf], np.nan)
+    X = X.ffill().fillna(0)
+
+    logger.info(f"特征数量: {X.shape[1]}, 样本数量: {X.shape[0]}")
+
+    # 显示分层特征结构
+    hierarchy = get_feature_hierarchy(X)
+    for level, info in hierarchy.items():
+        n = len(info["features"])
+        logger.info(f"  {level} ({info['description']}): {n}个特征")
+
+    return X, y
+
+
+def train_and_evaluate(X, y, period="5min", task="classification"):
+    """
+    训练模型并评估。
+
+    Parameters
+    ----------
+    X : pd.DataFrame
+        特征矩阵
+    y : pd.Series
+        目标变量
+    period : str
+        K线周期
+    task : str
+        任务类型
+
+    Returns
+    -------
+    tuple
+        (model, metrics) 训练好的模型和评估指标
+    """
+    train_ratio = BACKTEST_CONFIG["train_ratio"]
+    val_ratio = BACKTEST_CONFIG["validation_ratio"]
+
+    n = len(X)
+    train_end = int(n * train_ratio)
+    val_end = int(n * (train_ratio + val_ratio))
+
+    X_train, y_train = X.iloc[:train_end], y.iloc[:train_end]
+    X_val, y_val = X.iloc[train_end:val_end], y.iloc[train_end:val_end]
+    X_test, y_test = X.iloc[val_end:], y.iloc[val_end:]
+
+    logger.info(f"创建 {period} 周期模型 (推荐框架: {ML_FRAMEWORKS[period]})...")
+    # 15分钟周期使用LSTM不参与集成，集成仅用于LightGBM+XGBoost周期
+    use_ensemble = ENSEMBLE_CONFIG.get("enabled", False) and period != "15min"
+    if use_ensemble:
+        logger.info("使用 LightGBM+XGBoost 集成模型...")
+        model = EnsembleModel(task=task)
+    else:
+        model = create_model(period, task=task)
+
+    logger.info("训练模型...")
+    model.train(X_train, y_train, X_val, y_val)
+
+    logger.info("评估模型...")
+    train_metrics = model.evaluate(X_train, y_train)
+    test_metrics = model.evaluate(X_test, y_test)
+
+    logger.info(f"训练集指标: {train_metrics}")
+    logger.info(f"测试集指标: {test_metrics}")
+
+    # 特征重要性
+    importance = model.get_feature_importance()
+    if importance is not None:
+        logger.info(f"Top 10 重要特征:\n{importance.head(10)}")
+
+    # 集成模型权重
+    if use_ensemble:
+        logger.info(f"集成模型权重: {model.get_model_weights()}")
+
+    # 仓位管理建议（增强版）
+    if task == "classification" and hasattr(model, 'predict_proba'):
+        try:
+            probas = model.predict_proba(X_test)[:, 1]
+            test_volatility = X_test["atr"].values if "atr" in X_test.columns else np.ones(len(X_test)) * 0.01
+            risk_mgr = RiskBudgetManager(
+                account_risk=POSITION_CONFIG.get("account_risk", 0.02),
+                max_position=POSITION_CONFIG.get("max_position", 1.0),
+                base_threshold=POSITION_CONFIG.get("base_threshold", 0.55),
+                max_drawdown=POSITION_CONFIG.get("max_drawdown", 0.15),
+                drawdown_warning=POSITION_CONFIG.get("drawdown_warning", 0.08),
+                max_daily_loss=POSITION_CONFIG.get("max_daily_loss", 0.03),
+                max_daily_trades=POSITION_CONFIG.get("max_daily_trades", 20),
+                max_position_usage=POSITION_CONFIG.get("max_position_usage", 0.9),  # [新增]
+            )
+            signals = risk_mgr.compute_signals(probas, test_volatility)
+
+            from models.var_stress import RiskModels  # [新增]
+            var_model = RiskModels()  # [新增]
+            if "close" in X_test.columns:  # [新增]
+                ret_1d = pd.Series(X_test["close"].values).pct_change().dropna().tolist()  # [新增]
+            elif "log_return" in X_test.columns:  # [BUGFIX] P0-6: use actual return feature as fallback
+                ret_1d = X_test["log_return"].dropna().tolist()  # [BUGFIX] P0-6
+            else:  # [新增]
+                ret_1d = (y_test.values * 2 - 1).astype(float).tolist()  # [BUGFIX] P0-6: use direction labels as proxy instead of probability diffs
+            var_results = var_model.calculate_comprehensive_var(ret_1d, confidence_levels=[0.95, 0.99], portfolio_value=1.0)  # [新增]
+            var99_list = [r for r in var_results if r.confidence_level == 0.99]  # [新增]
+            if len(var99_list) > 0:  # [新增]
+                var99 = float(var99_list[0].var_value)  # [新增]
+                if var99 > VAR_CONFIG.get("var99_gate", 0.02):  # [新增]
+                    signals["position_size"] = signals["position_size"] * VAR_CONFIG.get("position_scale_on_breach", 0.5)  # [新增]
+
+            n_trades = np.sum(signals["signal"] != 0)
+            logger.info(f"仓位管理: 测试集产生 {n_trades} 个交易信号")
+            logger.info(f"  回撤保护乘数: {signals['drawdown_multiplier']:.2f}")
+
+            # 模拟交易绩效
+            trade_mask = signals["signal"] != 0
+            if np.sum(trade_mask) > 0:
+                # 模拟收益: 将二分类标签(0/1)映射为方向(-1/+1)，乘以模拟单笔收益0.1%
+                actual_returns = (y_test.values[trade_mask] * 2 - 1) * 0.001
+                per_trade_cost = COST_CONFIG.get("buy_rate", 0.0003)  # [新增]
+                actual_returns = actual_returns - per_trade_cost  # [新增]
+                perf = compute_performance_metrics(actual_returns)
+                logger.info(f"  模拟绩效: 胜率={perf['win_rate']:.2%}, "
+                            f"盈亏比={perf['profit_factor']:.2f}, "
+                            f"Sharpe={perf['sharpe_ratio']:.2f}")
+        except Exception:
+            pass
+
+    # 自适应模型管理演示
+    if task == "classification" and period != "15min":
+        try:
+            adaptive_mgr = AdaptiveModelManager(
+                base_model=model if not use_ensemble else model.lgbm,
+                drift_window=ADAPTIVE_CONFIG.get("drift_window", 100),
+                drift_warning=ADAPTIVE_CONFIG.get("drift_warning_threshold", 0.05),
+                drift_threshold=ADAPTIVE_CONFIG.get("drift_threshold", 0.10),
+                update_interval=ADAPTIVE_CONFIG.get("update_interval", 500),
+                n_incremental_trees=ADAPTIVE_CONFIG.get("n_incremental_trees", 50),
+                base_threshold=POSITION_CONFIG.get("base_threshold", 0.55),
+            )
+            y_pred_test = model.predict(X_test)
+            test_vol = X_test["atr"].values if "atr" in X_test.columns else np.ones(len(X_test)) * 0.01
+            vol_mean = float(np.nanmean(test_vol))
+
+            # 模拟逐步喂入数据
+            batch_size = min(100, len(X_test))
+            status = adaptive_mgr.step(
+                y_true=y_test.values[:batch_size],
+                y_pred=y_pred_test[:batch_size],
+                current_volatility=float(np.nanmean(test_vol[:batch_size])),
+                mean_volatility=vol_mean,
+            )
+            summary = adaptive_mgr.get_status_summary()
+            logger.info(f"自适应模块: 漂移={status['drift_level']}, "
+                        f"阈值={status['threshold']:.3f}, "
+                        f"需要重训={status['needs_retrain']}")
+        except Exception:
+            pass
+
+    return model, {"train": train_metrics, "test": test_metrics}
+
+
+def run_feature_selection(X, y, period="5min", task="classification"):
+    """
+    运行特征选择流程。
+
+    Parameters
+    ----------
+    X : pd.DataFrame
+        特征矩阵
+    y : pd.Series
+        目标变量
+    period : str
+        K线周期
+    task : str
+        任务类型
+
+    Returns
+    -------
+    dict
+        特征选择结果
+    """
+    logger.info("=" * 60)
+    logger.info("开始回测特征选择...")
+    logger.info("=" * 60)
+
+    # 对LSTM使用XGBoost做特征选择（LSTM没有直接的特征重要性）
+    model_map = {
+        "1min": LightGBMModel,
+        "5min": XGBoostModel,
+        "15min": XGBoostModel,
+    }
+    model_class = model_map[period]
+
+    selector = FeatureSelector(
+        n_splits=BACKTEST_CONFIG["n_splits"],
+        min_success_rate=BACKTEST_CONFIG["min_success_rate"],
+    )
+
+    # 1. 评估各特征组的成功率
+    logger.info("评估各特征组的成功率...")
+    feature_groups = get_recommended_feature_groups()
+    group_results = selector.evaluate_feature_subsets(
+        model_class, X, y, feature_groups, task=task
+    )
+    logger.info(f"特征组评估结果:\n{group_results[['group', 'n_features', 'accuracy']].to_string()}")
+
+    # 2. 综合特征选择
+    logger.info("综合特征选择...")
+    best_features = selector.select_best_features(
+        model_class, X, y, task=task, top_n=20
+    )
+    logger.info(f"最佳特征数量: {best_features['n_features']}")
+    logger.info(f"最佳特征: {best_features['selected_features']}")
+    if task == "classification":
+        logger.info(f"最终成功率: {best_features['final_success_rate']:.4f}")
+
+    return {
+        "group_results": group_results,
+        "best_features": best_features,
+        "selector": selector,
+    }
+
+
+def run_lstm_feature_selection(n_rows=5000, target="future_direction",
+                               n_features=None):
+    """
+    运行15分钟LSTM特征预筛选流程。
+
+    流程:
+        1. 计算全量特征
+        2. 使用XGBoost进行特征重要性评估（TimeSeriesSplit CV）
+        3. 筛选Top N特征
+        4. 使用筛选后的特征训练LSTM
+        5. 对比全量特征 vs 筛选特征的效果
+
+    Parameters
+    ----------
+    n_rows : int
+        模拟数据行数
+    target : str
+        预测目标名称
+    n_features : int, optional
+        选择特征数量，None时从配置读取
+    """
+    from models.xgb_feature_selector import XGBFeatureSelector
+
+    sel_cfg = LSTM_FEATURE_SELECTION_CONFIG["selection"]
+    if n_features is None:
+        n_features = sel_cfg["n_features"]
+
+    task = "classification" if target in ("future_direction", "future_regime") else "regression"
+
+    logger.info("=" * 60)
+    logger.info("15分钟LSTM模型训练 — XGBoost特征预筛选")
+    logger.info("=" * 60)
+
+    # Step 1: 生成数据和全量特征
+    logger.info("Step 1: 生成15分钟模拟数据...")
+    df = generate_sample_data(n_rows=n_rows, period="15min")
+    X, y = prepare_data(df, period="15min", target_name=target)
+    logger.info(f"原始特征数量: {X.shape[1]}, 样本数量: {X.shape[0]}")
+
+    # Step 2: XGBoost特征筛选
+    logger.info(f"\nStep 2: XGBoost特征筛选 (目标: {n_features}个特征)...")
+    xgb_params = LSTM_FEATURE_SELECTION_CONFIG.get("xgb_params", {})
+    selector = XGBFeatureSelector(
+        n_features=n_features,
+        threshold=sel_cfg.get("threshold", "median"),
+        cv_splits=sel_cfg.get("cv_splits", 5),
+        xgb_params=xgb_params,
+    )
+    selected_features, importance_df = selector.fit_select(X, y)
+
+    # Step 3: 特征重要性报告
+    logger.info(f"\nStep 3: 特征重要性排名 (Top 15):")
+    top15 = importance_df.head(15)
+    for _, row in top15.iterrows():
+        logger.info(f"  {row['feature']:30s}  importance={row['importance']:.4f}  std={row['std']:.4f}")
+
+    # 按特征组分析
+    feature_groups = get_recommended_feature_groups()
+    group_analysis = selector.get_feature_groups_importance(feature_groups)
+    logger.info(f"\nStep 3b: 特征组重要性分析:")
+    for group_name, row in group_analysis.iterrows():
+        logger.info(f"  {group_name:12s}  score={row['score']:.4f}  "
+                     f"入选={int(row['n_selected'])}/{int(row['n_features'])}")
+
+    # Step 4: 动态特征数量建议
+    logger.info(f"\nStep 4: 动态特征数量搜索...")
+    dynamic_result = selector.dynamic_feature_count(
+        X, y, min_features=10, max_features=min(40, X.shape[1]), step=5,
+    )
+    optimal_n = dynamic_result["optimal_n_features"]
+    logger.info(f"  建议最佳特征数量: {optimal_n}")
+    for _, row in dynamic_result["search_results"].iterrows():
+        marker = " ←" if int(row["n_features"]) == optimal_n else ""
+        logger.info(f"    n={int(row['n_features']):3d}  accuracy={row['accuracy']:.4f}  "
+                     f"std={row['std']:.4f}{marker}")
+
+    # Step 5: 使用筛选后特征训练LSTM
+    X_selected = X[selected_features]
+    logger.info(f"\nStep 5: 使用筛选后的 {len(selected_features)} 个特征训练LSTM...")
+
+    train_ratio = BACKTEST_CONFIG["train_ratio"]
+    val_ratio = BACKTEST_CONFIG["validation_ratio"]
+    n = len(X_selected)
+    train_end = int(n * train_ratio)
+    val_end = int(n * (train_ratio + val_ratio))
+
+    X_tr, y_tr = X_selected.iloc[:train_end], y.iloc[:train_end]
+    X_va, y_va = X_selected.iloc[train_end:val_end], y.iloc[train_end:val_end]
+    X_te, y_te = X_selected.iloc[val_end:], y.iloc[val_end:]
+
+    try:
+        lstm_model = create_model("15min", task=task)
+        lstm_model.train(X_tr, y_tr, X_va, y_va)
+        selected_metrics = lstm_model.evaluate(X_te, y_te)
+        logger.info(f"  筛选特征LSTM测试集: {selected_metrics}")
+
+        # Step 6: 对比实验（全量特征 vs 筛选特征）
+        logger.info(f"\nStep 6: 对比实验 — 全量特征 vs 筛选特征")
+        X_tr_full = X.iloc[:train_end]
+        X_va_full = X.iloc[train_end:val_end]
+        X_te_full = X.iloc[val_end:]
+
+        lstm_full = create_model("15min", task=task)
+        lstm_full.train(X_tr_full, y.iloc[:train_end],
+                        X_va_full, y.iloc[train_end:val_end])
+        full_metrics = lstm_full.evaluate(X_te_full, y.iloc[val_end:])
+        logger.info(f"  全量特征LSTM测试集: {full_metrics}")
+
+        # 对比
+        if task == "classification":
+            full_acc = full_metrics.get("accuracy", 0)
+            sel_acc = selected_metrics.get("accuracy", 0)
+            improvement = sel_acc - full_acc
+            logger.info(f"\n  全量特征 ({X.shape[1]}个): 准确率 = {full_acc:.4f}")
+            logger.info(f"  筛选特征 ({len(selected_features)}个): 准确率 = {sel_acc:.4f}")
+            logger.info(f"  改进: {improvement:+.4f} ({improvement * 100:+.2f}%)")
+            logger.info(f"  特征减少: {X.shape[1]}→{len(selected_features)} "
+                         f"(-{(1 - len(selected_features) / X.shape[1]) * 100:.0f}%)")
+        else:
+            full_r2 = full_metrics.get("r2", 0)
+            sel_r2 = selected_metrics.get("r2", 0)
+            logger.info(f"\n  全量特征 ({X.shape[1]}个): R² = {full_r2:.4f}")
+            logger.info(f"  筛选特征 ({len(selected_features)}个): R² = {sel_r2:.4f}")
+    except ImportError:
+        logger.warning("  TensorFlow未安装，跳过LSTM训练对比。")
+        logger.info("  特征筛选结果已完成（Steps 1-4），安装TensorFlow后可训练LSTM。")
+        logger.info(f"  筛选特征列表: {selected_features}")
+
+    logger.info("=" * 60)
+    logger.info("15分钟LSTM特征预筛选流程完成!")
+    logger.info("=" * 60)
+
+
+def run_multi_timeframe(n_rows=5000, target="future_direction"):
+    """
+    运行多时间框架协同交易演示。
+
+    训练15分钟、5分钟、1分钟三个周期的模型，
+    然后通过 MultiTimeframeCoordinator 协同生成交易信号。
+
+    Parameters
+    ----------
+    n_rows : int
+        模拟数据行数
+    target : str
+        预测目标名称
+    """
+    from models.multi_timeframe import MultiTimeframeCoordinator
+
+    logger.info("=" * 60)
+    logger.info("多时间框架协同交易系统")
+    logger.info("=" * 60)
+
+    task = "classification" if target in ("future_direction", "future_regime") else "regression"
+
+    # Step 1: 生成三个周期的数据
+    logger.info("生成三个周期的模拟数据...")
+    df_15m = generate_sample_data(n_rows=n_rows, period="15min")
+    df_5m = generate_sample_data(n_rows=n_rows * 3, period="5min")
+    df_1m = generate_sample_data(n_rows=n_rows * 15, period="1min")
+
+    # Step 2: 各周期独立训练
+    logger.info("训练15分钟模型（趋势方向）...")
+    X_15m, y_15m = prepare_data(df_15m, period="15min", target_name=target)
+    # 多时间框架模式使用XGBoost作为15分钟模型，因为协同系统需要predict_proba
+    # 且XGBoost无需TensorFlow依赖，适合轻量级部署
+    model_15m = XGBoostModel(task=task)
+    train_ratio = BACKTEST_CONFIG["train_ratio"]
+    val_ratio = BACKTEST_CONFIG["validation_ratio"]
+    n_15 = len(X_15m)
+    tr_end_15 = int(n_15 * train_ratio)
+    val_end_15 = int(n_15 * (train_ratio + val_ratio))
+    model_15m.train(X_15m.iloc[:tr_end_15], y_15m.iloc[:tr_end_15],
+                    X_15m.iloc[tr_end_15:val_end_15], y_15m.iloc[tr_end_15:val_end_15])
+    metrics_15m = model_15m.evaluate(X_15m.iloc[val_end_15:], y_15m.iloc[val_end_15:])
+    logger.info(f"  15分钟模型测试集: {metrics_15m}")
+
+    logger.info("训练5分钟模型（入场时机）...")
+    X_5m, y_5m = prepare_data(df_5m, period="5min", target_name=target)
+    model_5m, _ = train_and_evaluate(X_5m, y_5m, period="5min", task=task)
+
+    logger.info("训练1分钟模型（入场价格）...")
+    X_1m, y_1m = prepare_data(df_1m, period="1min", target_name=target)
+    model_1m, _ = train_and_evaluate(X_1m, y_1m, period="1min", task=task)
+
+    # Step 3: 创建协同系统
+    logger.info("=" * 60)
+    logger.info("创建多时间框架协同系统...")
+    mtf_config = MULTI_TIMEFRAME_CONFIG
+    coordinator = MultiTimeframeCoordinator(
+        neutral_zone=mtf_config.get("neutral_zone", 0.10),
+        entry_threshold=mtf_config.get("entry_threshold", 0.60),
+        optimization_threshold=mtf_config.get("optimization_threshold", 0.55),
+        min_grade=mtf_config.get("min_grade", "C"),
+    )
+    coordinator.set_models(
+        model_15min=model_15m,
+        model_5min=model_5m,
+        model_1min=model_1m,
+    )
+
+    # Step 4: 使用测试集数据生成协同信号
+    # 取各周期测试集的尾部数据（对齐最小长度）
+    test_start = int(len(X_15m) * 0.85)
+    X_15m_test = X_15m.iloc[test_start:]
+    test_start_5m = int(len(X_5m) * 0.85)
+    X_5m_test = X_5m.iloc[test_start_5m:]
+    test_start_1m = int(len(X_1m) * 0.85)
+    X_1m_test = X_1m.iloc[test_start_1m:]
+
+    # 对齐到最小长度
+    min_len = min(len(X_15m_test), len(X_5m_test), len(X_1m_test))
+    X_15m_test = X_15m_test.iloc[:min_len]
+    X_5m_test = X_5m_test.iloc[:min_len]
+    X_1m_test = X_1m_test.iloc[:min_len]
+
+    logger.info(f"协同信号生成: {min_len} 个样本")
+    result = coordinator.generate_signals(X_15m_test, X_5m_test, X_1m_test)
+
+    # Step 5: 输出协同信号统计
+    summary = coordinator.get_signal_summary()
+    logger.info("=" * 60)
+    logger.info("多时间框架协同信号统计:")
+    logger.info(f"  总样本数: {summary['n_total']}")
+    logger.info(f"  做多信号: {summary['n_long']}")
+    logger.info(f"  做空信号: {summary['n_short']}")
+    logger.info(f"  中性(无信号): {summary['n_neutral']}")
+    logger.info(f"  A级信号(三周期共振): {summary.get('grade_A', 0)}")
+    logger.info(f"  B级信号(双周期确认): {summary.get('grade_B', 0)}")
+    logger.info(f"  C级信号(部分确认): {summary.get('grade_C', 0)}")
+    logger.info(f"  平均信号强度: {summary['avg_signal_strength']:.3f}")
+    logger.info(f"  平均一致性评分: {summary['avg_agreement']:.3f}")
+    logger.info("=" * 60)
+    logger.info("多时间框架协同交易系统完成!")
+
+
+def run_smart_labels(n_rows=5000, period="5min"):
+    """
+    运行智能标签生成演示。
+
+    使用SmartLabelGenerator替代简单二元分类标签，
+    生成五级交易信号和信号质量评分。
+
+    Parameters
+    ----------
+    n_rows : int
+        模拟数据行数
+    period : str
+        K线周期
+    """
+    from models.smart_labels import SmartLabelGenerator
+
+    logger.info("=" * 60)
+    logger.info("智能标签生成系统")
+    logger.info(f"周期: {period}")
+    logger.info("=" * 60)
+
+    # Step 1: 生成数据
+    logger.info("生成模拟数据...")
+    df = generate_sample_data(n_rows=n_rows, period=period)
+
+    # Step 2: 生成智能标签
+    horizon = SMART_LABEL_CONFIG["horizon"].get(period, 3)
+    generator = SmartLabelGenerator(
+        horizon=horizon,
+        base_threshold=SMART_LABEL_CONFIG.get("base_threshold", 0.001),
+        strong_multiplier=SMART_LABEL_CONFIG.get("strong_multiplier", 2.0),
+        vol_window=SMART_LABEL_CONFIG.get("vol_window", 20),
+        volume_window=SMART_LABEL_CONFIG.get("volume_window", 60),
+        quality_weights=SMART_LABEL_CONFIG.get("quality_weights"),
+    )
+    labels = generator.create_labels(df)
+
+    # Step 3: 统计
+    signal_col = labels["trading_signal"]
+    valid = signal_col.dropna()
+    logger.info(f"\n标签统计 (共{len(valid)}个有效样本):")
+    for sig_val in [-2, -1, 0, 1, 2]:
+        count = int((valid == sig_val).sum())
+        pct = count / len(valid) * 100 if len(valid) > 0 else 0
+        desc = generator.get_signal_description(sig_val)
+        logger.info(f"  {desc}: {count} ({pct:.1f}%)")
+
+    quality = labels["signal_quality"].dropna()
+    logger.info(f"\n信号质量统计:")
+    logger.info(f"  平均质量: {quality.mean():.3f}")
+    logger.info(f"  高质量信号 (>0.6): {int((quality > 0.6).sum())}")
+
+    # Step 4: 使用智能标签训练模型
+    logger.info(f"\n使用智能标签训练模型...")
+    X, _ = prepare_data(df, period=period, target_name="future_direction")
+
+    # 对齐标签
+    aligned = labels.loc[X.index]
+    y_smart = aligned["trading_signal"]
+    y_smart = y_smart.dropna()
+    X_aligned = X.loc[y_smart.index]
+
+    if len(X_aligned) > 100:
+        # 重映射信号到非负整数 (-2→0, -1→1, 0→2, 1→3, 2→4) 以兼容XGBoost
+        y_remapped = y_smart + 2
+        model, metrics = train_and_evaluate(
+            X_aligned, y_remapped, period=period, task="classification"
+        )
+        logger.info(f"智能标签模型测试集: {metrics['test']}")
+
+    logger.info("=" * 60)
+    logger.info("智能标签生成系统完成!")
+    logger.info("=" * 60)
+
+
+def run_hybrid_system(n_rows=5000, period="5min"):
+    """
+    运行混合智能交易系统演示。
+
+    使用五个独立交易专家（趋势跟踪、均值回归、突破、量价、持仓确认）
+    通过加权投票生成交易信号。
+
+    Parameters
+    ----------
+    n_rows : int
+        模拟数据行数
+    period : str
+        K线周期
+    """
+    from models.hybrid_trading import HybridTradingSystem
+
+    logger.info("=" * 60)
+    logger.info("混合智能交易系统")
+    logger.info(f"周期: {period}")
+    logger.info("=" * 60)
+
+    # Step 1: 生成数据
+    logger.info("生成模拟数据...")
+    df = generate_sample_data(n_rows=n_rows, period=period)
+
+    # Step 2: 创建混合系统
+    system = HybridTradingSystem(
+        signal_threshold=HYBRID_SYSTEM_CONFIG.get("signal_threshold", 0.3),
+        max_position=HYBRID_SYSTEM_CONFIG.get("max_position", 0.2),
+        target_win_rate=HYBRID_SYSTEM_CONFIG.get("target_win_rate", 0.7),
+        target_win_loss_ratio=HYBRID_SYSTEM_CONFIG.get("target_win_loss_ratio", 2.0),
+    )
+
+    # Step 3: 单点预测演示
+    logger.info("\n单点预测 (最新K线):")
+    result = system.predict(df)
+    logger.info(f"  最终信号: {result['final_signal']} (1=做多, -1=做空, 0=观望)")
+    logger.info(f"  建议仓位: {result['position_size']:.4f}")
+    logger.info(f"  综合置信度: {result['confidence']:.4f}")
+    logger.info(f"  融合信号: {result['fused_signal']:.4f}")
+    logger.info(f"  专家一致性: {result['agreement']:.2%}")
+
+    logger.info("\n各专家信号明细:")
+    expert_names = {
+        "trend": "趋势跟踪",
+        "mean_reversion": "均值回归",
+        "breakout": "突破交易",
+        "volume_price": "量价关系",
+        "oi_confirmation": "持仓确认",
+    }
+    for name, info in result["experts_breakdown"].items():
+        cn_name = expert_names.get(name, name)
+        logger.info(f"  {cn_name}: 信号={info['signal']:+.1f}, "
+                     f"置信度={info['confidence']:.3f}")
+
+    # Step 4: 批量预测
+    batch_window = HYBRID_SYSTEM_CONFIG.get("batch_window", 100)
+    logger.info(f"\n批量预测 (窗口={batch_window})...")
+    batch_results = system.predict_batch(df, window=batch_window)
+
+    n_long = int((batch_results["signal"] == 1).sum())
+    n_short = int((batch_results["signal"] == -1).sum())
+    n_neutral = int((batch_results["signal"] == 0).sum())
+    total = len(batch_results)
+
+    logger.info(f"  总样本: {total}")
+    logger.info(f"  做多信号: {n_long} ({n_long/total*100:.1f}%)")
+    logger.info(f"  做空信号: {n_short} ({n_short/total*100:.1f}%)")
+    logger.info(f"  观望: {n_neutral} ({n_neutral/total*100:.1f}%)")
+    logger.info(f"  平均置信度: {batch_results['confidence'].mean():.4f}")
+    logger.info(f"  平均一致性: {batch_results['agreement'].mean():.2%}")
+
+    active = batch_results[batch_results["signal"] != 0]
+    if len(active) > 0:
+        logger.info(f"  活跃信号平均仓位: {active['position_size'].mean():.4f}")
+
+    logger.info("=" * 60)
+    logger.info("混合智能交易系统完成!")
+    logger.info("=" * 60)
+
+
+def main():
+    """主流程入口"""
+    parser = argparse.ArgumentParser(description="商品期货机器学习量化模型")
+    parser.add_argument("--period", type=str, default="5min",
+                        choices=["1min", "5min", "15min"],
+                        help="K线周期 (default: 5min)")
+    parser.add_argument("--target", type=str, default="future_direction",
+                        choices=["future_return", "future_direction", "future_regime"],
+                        help="预测目标 (default: future_direction)")
+    parser.add_argument("--n-rows", type=int, default=5000,
+                        help="模拟数据行数 (default: 5000)")
+    parser.add_argument("--skip-feature-selection", action="store_true",
+                        help="跳过特征选择步骤")
+    parser.add_argument("--multi-timeframe", action="store_true",
+                        help="运行多时间框架协同交易系统")
+    parser.add_argument("--feature-selection", action="store_true",
+                        help="运行15分钟LSTM特征预筛选流程（XGBoost筛选→LSTM训练）")
+    parser.add_argument("--n-features", type=int, default=None,
+                        help="特征预筛选: 选择的特征数量 (default: 从配置读取)")
+    parser.add_argument("--smart-labels", action="store_true",
+                        help="运行智能标签生成系统（五级信号+质量评分）")
+    parser.add_argument("--hybrid", action="store_true",
+                        help="运行混合智能交易系统（五专家加权投票）")
+    args = parser.parse_args()
+
+    # 智能标签模式
+    if args.smart_labels:
+        run_smart_labels(n_rows=args.n_rows, period=args.period)
+        return
+
+    # 混合专家系统模式
+    if args.hybrid:
+        run_hybrid_system(n_rows=args.n_rows, period=args.period)
+        return
+
+    # 多时间框架协同模式
+    if args.multi_timeframe:
+        run_multi_timeframe(n_rows=args.n_rows, target=args.target)
+        return
+
+    # 15分钟LSTM特征预筛选模式
+    if args.feature_selection:
+        run_lstm_feature_selection(
+            n_rows=args.n_rows, target=args.target,
+            n_features=args.n_features,
+        )
+        return
+
+    task = "classification" if args.target in ("future_direction", "future_regime") else "regression"
+
+    logger.info("=" * 60)
+    logger.info("商品期货机器学习量化模型")
+    logger.info(f"周期: {args.period}, 目标: {args.target}, 任务: {task}")
+    logger.info(f"推荐ML框架: {ML_FRAMEWORKS[args.period]}")
+    logger.info("=" * 60)
+
+    # 1. 生成/加载数据
+    logger.info("生成模拟数据...")
+    df = generate_sample_data(n_rows=args.n_rows, period=args.period)
+    logger.info(f"数据形状: {df.shape}")
+
+    # 2. 准备数据
+    X, y = prepare_data(df, period=args.period, target_name=args.target)
+
+    # 3. 训练和评估
+    model, metrics = train_and_evaluate(X, y, period=args.period, task=task)
+
+    # 4. 特征选择（可选）
+    if not args.skip_feature_selection:
+        selection_results = run_feature_selection(X, y, period=args.period, task=task)
+
+    logger.info("=" * 60)
+    logger.info("流程完成!")
+    logger.info("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
