@@ -6,6 +6,16 @@ HFMLLGBMQlibModel  : 将 HFML LightGBMModel 包装为 Qlib Model 协议。
 HFMLXGBQlibModel   : 将 HFML XGBoostModel 包装为 Qlib Model 协议。
 
 所有模型均继承 qlib.model.base.Model，实现 fit / predict 接口。
+
+标签任务契约（统一方案）
+-----------------------
+HFMLSmartLabelProcessor 生成的 trading_signal 为五级信号：-2/-1/0/+1/+2。
+所有模型包装器默认将其映射为**二分类方向标签**：
+  - trading_signal > 0  → 1 (bullish)
+  - trading_signal <= 0 → 0 (bearish / neutral)
+
+若需要五分类或回归，请通过 label_col 参数指定 "expected_return"（回归）
+或在子类中重写 _encode_label()。
 """
 
 import logging
@@ -24,13 +34,7 @@ class _HFMLModelMixin:
     """公共辅助方法：从 dataset 提取 X/y，生成带 MultiIndex 的预测序列。"""
 
     def _prepare_Xy(self, dataset, segments, col_set=("feature", "label"), data_key=None):
-        """从 DatasetH/DataHandlerLP 提取特征与标签。
-
-        Returns
-        -------
-        tuple of (X_list, y_list)
-            每个元素对应一个 segment 的 X/y DataFrame/Series。
-        """
+        """从 DatasetH/DataHandlerLP 提取特征与标签。"""
         try:
             from qlib.data.dataset.handler import DataHandlerLP
             dk = data_key or DataHandlerLP.DK_L
@@ -59,9 +63,40 @@ class _HFMLModelMixin:
     def _make_pred_series(self, scores: np.ndarray, index: pd.Index,
                           name: str = "score") -> pd.Series:
         """将预测分数封装为带 MultiIndex 的 pd.Series。"""
-        if not isinstance(index, pd.MultiIndex):
-            return pd.Series(scores, index=index, name=name)
         return pd.Series(scores, index=index, name=name)
+
+    def _extract_label(self, label_df, label_col: str) -> "pd.Series | None":
+        """从标签 DataFrame 提取目标列，并进行二分类方向映射。
+
+        五级 trading_signal (-2/-1/0/+1/+2) → 二分类方向 (0/1)：
+          signal > 0 → 1, 否则 → 0
+        """
+        if label_df is None:
+            return None
+        if isinstance(label_df, pd.Series):
+            raw = label_df
+        elif isinstance(label_df, pd.DataFrame):
+            if label_col in label_df.columns:
+                raw = label_df[label_col]
+            elif isinstance(label_df.columns, pd.MultiIndex):
+                found = None
+                for top, sub in label_df.columns:
+                    if sub == label_col:
+                        found = label_df[(top, sub)]
+                        break
+                if found is None:
+                    raw = label_df.iloc[:, 0]
+                else:
+                    raw = found
+            else:
+                raw = label_df.iloc[:, 0]
+        else:
+            return label_df
+
+        # 二分类方向映射：signal > 0 → 1，其余 → 0
+        if label_col == "trading_signal":
+            return (raw > 0).astype(int)
+        return raw
 
 
 # ---------------------------------------------------------------------------
@@ -104,8 +139,8 @@ try:
                 col_set=["feature", "label"],
                 data_key=DataHandlerLP.DK_L,
             )
-            y_train = self._extract_label(y_train_df)
-            y_valid = self._extract_label(y_valid_df)
+            y_train = self._extract_label(y_train_df, self.label_col)
+            y_valid = self._extract_label(y_valid_df, self.label_col)
 
             if X_train.empty or y_train is None:
                 raise ValueError("训练数据为空，请检查 DataHandler 配置")
@@ -148,23 +183,6 @@ try:
                 )
             return self._make_pred_series(scores[:n], valid_index[:n])
 
-        def _extract_label(self, label_df):
-            """从标签 DataFrame 提取目标列。"""
-            if label_df is None:
-                return None
-            if isinstance(label_df, pd.Series):
-                return label_df
-            if isinstance(label_df, pd.DataFrame):
-                if self.label_col in label_df.columns:
-                    return label_df[self.label_col]
-                # MultiIndex 列
-                if isinstance(label_df.columns, pd.MultiIndex):
-                    for top, sub in label_df.columns:
-                        if sub == self.label_col:
-                            return label_df[(top, sub)]
-                return label_df.iloc[:, 0]
-            return label_df
-
     class HFMLLGBMQlibModel(Model, _HFMLModelMixin):
         """将 HFML LightGBMModel 包装为 Qlib Model（1 分钟周期推荐）。
 
@@ -175,7 +193,7 @@ try:
         task : str
             "classification" 或 "regression"。
         label_col : str
-            标签列名，默认 "trading_signal"。
+            标签列名，默认 "trading_signal"（会被映射为二分类方向）。
         """
 
         def __init__(self, params=None, task="classification", label_col="trading_signal"):
@@ -194,8 +212,8 @@ try:
                 col_set=["feature", "label"],
                 data_key=DataHandlerLP.DK_L,
             )
-            y_train = self._extract_label(y_train_df)
-            y_valid = self._extract_label(y_valid_df)
+            y_train = self._extract_label(y_train_df, self.label_col)
+            y_valid = self._extract_label(y_valid_df, self.label_col)
             self.inner.train(
                 X_train, y_train,
                 X_val=X_valid if not X_valid.empty else None,
@@ -216,21 +234,6 @@ try:
                 scores = self.inner.predict(X_test).astype(float)
             return self._make_pred_series(scores, X_test.index)
 
-        def _extract_label(self, label_df):
-            if label_df is None:
-                return None
-            if isinstance(label_df, pd.Series):
-                return label_df
-            if isinstance(label_df, pd.DataFrame):
-                if self.label_col in label_df.columns:
-                    return label_df[self.label_col]
-                if isinstance(label_df.columns, pd.MultiIndex):
-                    for top, sub in label_df.columns:
-                        if sub == self.label_col:
-                            return label_df[(top, sub)]
-                return label_df.iloc[:, 0]
-            return label_df
-
     class HFMLXGBQlibModel(Model, _HFMLModelMixin):
         """将 HFML XGBoostModel 包装为 Qlib Model（5 分钟周期推荐）。
 
@@ -241,7 +244,7 @@ try:
         task : str
             "classification" 或 "regression"。
         label_col : str
-            标签列名，默认 "trading_signal"。
+            标签列名，默认 "trading_signal"（会被映射为二分类方向）。
         """
 
         def __init__(self, params=None, task="classification", label_col="trading_signal"):
@@ -260,8 +263,8 @@ try:
                 col_set=["feature", "label"],
                 data_key=DataHandlerLP.DK_L,
             )
-            y_train = self._extract_label(y_train_df)
-            y_valid = self._extract_label(y_valid_df)
+            y_train = self._extract_label(y_train_df, self.label_col)
+            y_valid = self._extract_label(y_valid_df, self.label_col)
             self.inner.train(
                 X_train, y_train,
                 X_val=X_valid if not X_valid.empty else None,
@@ -281,21 +284,6 @@ try:
             except Exception:
                 scores = self.inner.predict(X_test).astype(float)
             return self._make_pred_series(scores, X_test.index)
-
-        def _extract_label(self, label_df):
-            if label_df is None:
-                return None
-            if isinstance(label_df, pd.Series):
-                return label_df
-            if isinstance(label_df, pd.DataFrame):
-                if self.label_col in label_df.columns:
-                    return label_df[self.label_col]
-                if isinstance(label_df.columns, pd.MultiIndex):
-                    for top, sub in label_df.columns:
-                        if sub == self.label_col:
-                            return label_df[(top, sub)]
-                return label_df.iloc[:, 0]
-            return label_df
 
 except ImportError:
     # Qlib 未安装时的占位实现
