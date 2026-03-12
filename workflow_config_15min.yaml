@@ -1,0 +1,183 @@
+# HFML × Qlib 完整工作流配置 — 15 分钟 LSTM 训练 + 回测
+# ============================================================
+# 使用方法:
+#   qrun workflow_config_15min.yaml
+#   或通过 test_integration.py 中的 Python API 驱动
+
+sys:
+  # 将项目根目录加入 Python 搜索路径，使 qlib_ext、features、models 等包可被导入
+  rel_path:
+    - .
+
+qlib_init:
+  # 若使用本地 CSV 数据（不依赖 Qlib 标准数据源），可将 provider_uri 设为
+  # 任何已初始化的 Qlib 数据目录，或使用 qlib.init() 的默认路径。
+  # 注意：此路径需要提前通过 qlib 数据脚本初始化，或留空让 Qlib 使用默认设置。
+  provider_uri: ~/.qlib/qlib_data/hfml_data
+  region: cn
+
+task:
+  # -----------------------------------------------------------------------
+  # 模型配置 — 15 分钟 LSTM（方案 B 过渡实现）
+  # -----------------------------------------------------------------------
+  model:
+    class: HFMLLSTMQlibModel
+    module_path: qlib_ext.models
+    kwargs:
+      task: classification
+      label_col: trading_signal
+      params:
+        sequence_length: 20
+        hidden_units: 64
+        dropout_rate: 0.2
+        epochs: 50
+        batch_size: 32
+        learning_rate: 0.001
+        patience: 10
+
+  # -----------------------------------------------------------------------
+  # 数据集配置 — 时序数据集（TSDatasetH）+ HFML DataHandler
+  # -----------------------------------------------------------------------
+  dataset:
+    class: TSDatasetH
+    module_path: qlib.data.dataset
+    kwargs:
+      step_len: 20
+      segments:
+        train: [2022-01-01, 2023-06-30]
+        valid: [2023-07-01, 2023-12-31]
+        test:  [2024-01-01, 2024-12-31]
+      handler:
+        class: HFMLDataHandler
+        module_path: qlib_ext.data
+        kwargs:
+          # 使用 HFML 自定义 DataLoader 读取 K 线 CSV
+          data_loader:
+            class: HFMLDataLoader
+            module_path: qlib_ext.data
+            kwargs:
+              csv_path: data/klines/KQi@SHFEag/KQi@SHFEag_15min.csv
+              # 以下因子配置为可选，若无外部因子文件可注释掉
+              # factor_index_pkl: data/factors/index.pkl
+              # factors_dir: data/factors
+              # factor_list: []
+          period: 15min
+          start_time: 2022-01-01
+          end_time: 2024-12-31
+          fit_start_time: 2022-01-01
+          fit_end_time: 2023-12-31
+          # 推理特征流水线（无未来信息）
+          infer_processors:
+            - class: HFMLFeatureProcessor
+              module_path: qlib_ext.processors
+              kwargs:
+                period: 15min
+            - class: HFMLTransformProcessor
+              module_path: qlib_ext.processors
+            - class: RobustZScoreNorm
+              module_path: qlib.data.dataset.processor
+              kwargs:
+                fields_group: feature
+            - class: Fillna
+              module_path: qlib.data.dataset.processor
+              kwargs:
+                fields_group: feature
+          # 训练标签流水线（包含未来信息，仅用于训练）
+          learn_processors:
+            - class: HFMLSmartLabelProcessor
+              module_path: qlib_ext.labels
+              kwargs:
+                period: 15min
+                config:
+                  horizon: 2
+                  base_threshold: 0.001
+                  strong_multiplier: 2.0
+                  vol_window: 20
+                  volume_window: 60
+                  quality_weights: [0.4, 0.3, 0.2, 0.1]
+            - class: HFMLQualityFilter
+              module_path: qlib_ext.processors
+              kwargs:
+                min_quality: 0.55
+
+  # -----------------------------------------------------------------------
+  # 记录器配置
+  # -----------------------------------------------------------------------
+  record:
+    # 1. 标准信号记录（生成 pred.pkl / label.pkl）
+    - class: SignalRecord
+      module_path: qlib.workflow.record_temp
+      kwargs:
+        model: <MODEL>
+        dataset: <DATASET>
+
+    # 2. 信号分析（IC、Rank IC 等）
+    - class: SigAnaRecord
+      module_path: qlib.workflow.record_temp
+      kwargs:
+        ana_long_short: False
+        ann_scaler: 252
+
+    # 3. HFML 特征选择报告（在训练集上运行 XGBoost 特征筛选）
+    - class: HFMLFeatureSelectionRecord
+      module_path: qlib_ext.records
+      kwargs:
+        selector_type: xgb
+        # selector_kwargs 必须匹配 XGBFeatureSelector 构造函数参数：
+        # n_features, threshold, cv_splits, xgb_params（而非扁平化的 XGB 参数）
+        selector_kwargs:
+          n_features: 25
+          threshold: median
+          cv_splits: 5
+          xgb_params:
+            n_estimators: 200
+            max_depth: 5
+            learning_rate: 0.05
+            subsample: 0.8
+            colsample_bytree: 0.8
+
+    # 4. 概念漂移监控
+    - class: DriftMonitoringRecord
+      module_path: qlib_ext.records
+
+    # 5. 组合回测（使用 HFML 混合策略）
+    - class: PortAnaRecord
+      module_path: qlib.workflow.record_temp
+      kwargs:
+        config:
+          strategy:
+            class: HFMLHybridStrategy
+            module_path: qlib_ext.strategies
+            kwargs:
+              instrument: KQi@SHFEag
+              signal:
+                class: HFMLHybridSignal
+                module_path: qlib_ext.signals
+                kwargs:
+                  window: 100
+                  signal_threshold: 0.3
+                  max_position: 0.2
+                  target_win_rate: 0.7
+                  target_win_loss_ratio: 2.0
+
+          executor:
+            class: SimulatorExecutor
+            module_path: qlib.backtest.executor
+            kwargs:
+              time_per_step: 15min
+              generate_portfolio_metrics: true
+              verbose: false
+
+          backtest:
+            start_time: 2024-01-01
+            end_time: 2024-12-31
+            account: 10000000
+            benchmark: ~
+            exchange_kwargs:
+              freq: 15min
+              deal_price: close
+              open_cost: 0.0003
+              close_cost: 0.0003
+              min_cost: 0
+              trade_unit: 1
+              limit_threshold: ~
